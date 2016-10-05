@@ -43,11 +43,41 @@ class TestCommandRunner:
             with pytest.raises(cmdexc.NoSuchCommandError):
                 list(cr.parse_all(cmdline_test.cmd, aliases=False))
 
+    def test_parse_all_with_alias(self, cmdline_test, config_stub):
+        config_stub.data = {'aliases': {'alias_name': cmdline_test.cmd}}
+
+        cr = runners.CommandRunner(0)
+        if cmdline_test.valid:
+            assert len(list(cr.parse_all("alias_name"))) > 0
+        else:
+            with pytest.raises(cmdexc.NoSuchCommandError):
+                list(cr.parse_all("alias_name"))
+
+    @pytest.mark.parametrize('command', ['', ' '])
+    def test_parse_empty_with_alias(self, command):
+        """An empty command should not crash.
+
+        See https://github.com/The-Compiler/qutebrowser/issues/1690
+        and https://github.com/The-Compiler/qutebrowser/issues/1773
+        """
+        cr = runners.CommandRunner(0)
+        with pytest.raises(cmdexc.NoSuchCommandError):
+            list(cr.parse_all(command))
+
     def test_parse_with_count(self):
         """Test parsing of commands with a count."""
         cr = runners.CommandRunner(0)
-        result = cr.parse('20:scroll down', aliases=False)
+        result = cr.parse('20:scroll down')
         assert result.cmd.name == 'scroll'
         assert result.count == 20
         assert result.args == ['down']
         assert result.cmdline == ['scroll', 'down']
+
+    def test_partial_parsing(self):
+        """Test partial parsing with a runner where it's enabled.
+
+        The same with it being disabled is tested by test_parse_all.
+        """
+        cr = runners.CommandRunner(0, partial_match=True)
+        result = cr.parse('message-i')
+        assert result.cmd.name == 'message-info'

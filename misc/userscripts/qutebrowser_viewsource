@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Copyright 2015 Zach-Button <zachrey.button@gmail.com>
 #
@@ -17,7 +17,7 @@
 # You should have received a copy of the GNU General Public License
 # along with qutebrowser.  If not, see <http://www.gnu.org/licenses/>.
 
-# 
+#
 # This script fetches the unprocessed HTML source for a page and opens it in vim.
 #	:bind gf spawn --userscript qutebrowser_viewsource
 #

@@ -32,7 +32,7 @@ import pytest
 from qutebrowser.utils import standarddir
 
 
-@pytest.yield_fixture(autouse=True)
+@pytest.fixture(autouse=True)
 def change_qapp_name(qapp):
     """Change the name of the QApplication instance.
 
@@ -52,15 +52,15 @@ def no_cachedir_tag(monkeypatch):
                         lambda: None)
 
 
-@pytest.yield_fixture(autouse=True)
-@pytest.mark.usefixtures('no_cachedir_tag')
-def reset_standarddir():
+@pytest.fixture
+def reset_standarddir(no_cachedir_tag):
     """Clean up standarddir arguments before and after each test."""
     standarddir.init(None)
     yield
     standarddir.init(None)
 
 
+@pytest.mark.usefixtures('reset_standarddir')
 @pytest.mark.parametrize('data_subdir, config_subdir, expected', [
     ('foo', 'foo', 'foo/data'),
     ('foo', 'bar', 'foo'),
@@ -80,6 +80,7 @@ def test_get_fake_windows_equal_dir(data_subdir, config_subdir, expected,
     assert standarddir.data() == expected
 
 
+@pytest.mark.usefixtures('reset_standarddir')
 class TestWritableLocation:
 
     """Tests for _writable_location."""
@@ -100,7 +101,7 @@ class TestWritableLocation:
         assert '\\' in loc
 
 
-@pytest.mark.usefixtures('no_cachedir_tag')
+@pytest.mark.usefixtures('reset_standarddir')
 class TestStandardDir:
 
     """Tests for standarddir."""
@@ -131,7 +132,7 @@ class TestStandardDir:
     def test_linux_normal(self, monkeypatch, tmpdir, func, subdirs):
         """Test dirs with XDG_*_HOME not set."""
         monkeypatch.setenv('HOME', str(tmpdir))
-        for var in ('DATA', 'CONFIG', 'CACHE'):
+        for var in ['DATA', 'CONFIG', 'CACHE']:
             monkeypatch.delenv('XDG_{}_HOME'.format(var), raising=False)
         assert func() == str(tmpdir.join(*subdirs))
 
@@ -159,7 +160,7 @@ class TestStandardDir:
 DirArgTest = collections.namedtuple('DirArgTest', 'arg, expected')
 
 
-@pytest.mark.usefixtures('no_cachedir_tag')
+@pytest.mark.usefixtures('reset_standarddir')
 class TestArguments:
 
     """Tests with confdir/cachedir/datadir arguments."""
@@ -195,8 +196,10 @@ class TestArguments:
         standarddir.init(args)
         assert standarddir.data() == testcase.expected
 
-    def test_confdir_none(self):
+    def test_confdir_none(self, mocker):
         """Test --confdir with None given."""
+        # patch makedirs to a noop so we don't really create a directory
+        mocker.patch('qutebrowser.utils.standarddir.os.makedirs')
         args = types.SimpleNamespace(confdir=None, cachedir=None, datadir=None,
                                      basedir=None)
         standarddir.init(args)
@@ -221,6 +224,15 @@ class TestArguments:
         standarddir.init(args)
         func = getattr(standarddir, typ)
         assert func() == expected
+
+    def test_basedir_relative(self, tmpdir):
+        """Test --basedir with a relative path."""
+        basedir = (tmpdir / 'basedir')
+        basedir.ensure(dir=True)
+        with tmpdir.as_cwd():
+            args = types.SimpleNamespace(basedir='basedir')
+            standarddir.init(args)
+            assert standarddir.config() == str(basedir / 'config')
 
 
 class TestInitCacheDirTag:
@@ -294,6 +306,7 @@ class TestCreatingDir:
         if os.name == 'posix':
             assert basedir.stat().mode & 0o777 == 0o700
 
+    @pytest.mark.usefixtures('reset_standarddir')
     @pytest.mark.parametrize('typ', DIR_TYPES)
     def test_exists_race_condition(self, mocker, tmpdir, typ):
         """Make sure there can't be a TOCTOU issue when creating the file.
@@ -307,6 +320,7 @@ class TestCreatingDir:
         m.sep = os.sep
         m.path.join = os.path.join
         m.path.exists.return_value = False
+        m.path.abspath = lambda x: x
 
         args = types.SimpleNamespace(basedir=str(tmpdir))
         standarddir.init(args)
@@ -315,6 +329,7 @@ class TestCreatingDir:
         func()
 
 
+@pytest.mark.usefixtures('reset_standarddir')
 class TestSystemData:
 
     """Test system data path."""
@@ -326,12 +341,18 @@ class TestSystemData:
         assert standarddir.system_data() == "/usr/share/qutebrowser"
 
     @pytest.mark.linux
-    def test_system_datadir_not_exist_linux(self, monkeypatch):
+    def test_system_datadir_not_exist_linux(self, monkeypatch, tmpdir,
+                                            fake_args):
         """Test that system-wide path isn't used on linux if path not exist."""
+        fake_args.basedir = str(tmpdir)
+        standarddir.init(fake_args)
         monkeypatch.setattr(os.path, 'exists', lambda path: False)
         assert standarddir.system_data() == standarddir.data()
 
-    def test_system_datadir_unsupportedos(self, monkeypatch):
+    def test_system_datadir_unsupportedos(self, monkeypatch, tmpdir,
+                                          fake_args):
         """Test that system-wide path is not used on non-Linux OS."""
+        fake_args.basedir = str(tmpdir)
+        standarddir.init(fake_args)
         monkeypatch.setattr('sys.platform', "potato")
         assert standarddir.system_data() == standarddir.data()

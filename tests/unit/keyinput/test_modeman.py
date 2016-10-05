@@ -19,17 +19,19 @@
 
 import pytest
 
-from qutebrowser.keyinput import modeman as modeman_module
 from qutebrowser.utils import usertypes
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QObject, pyqtSignal
 
 
-class FakeKeyparser:
+class FakeKeyparser(QObject):
 
     """A fake BaseKeyParser which doesn't handle anything."""
 
+    request_leave = pyqtSignal(usertypes.KeyMode, str)
+
     def __init__(self):
+        super().__init__()
         self.passthrough = False
 
     def handle(self, evt):
@@ -37,11 +39,9 @@ class FakeKeyparser:
 
 
 @pytest.fixture
-def modeman(config_stub, qapp):
-    config_stub.data = {'input': {'forward-unbound-keys': 'auto'}}
-    mm = modeman_module.ModeManager(0)
-    mm.register(usertypes.KeyMode.normal, FakeKeyparser())
-    return mm
+def modeman(mode_manager):
+    mode_manager.register(usertypes.KeyMode.normal, FakeKeyparser())
+    return mode_manager
 
 
 @pytest.mark.parametrize('key, modifiers, text, filtered', [

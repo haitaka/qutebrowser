@@ -17,8 +17,6 @@
 # You should have received a copy of the GNU General Public License
 # along with qutebrowser.  If not, see <http://www.gnu.org/licenses/>.
 
-"""Tests for qutebrowser.browser.commands."""
-
 import collections
 
 import pytest
@@ -34,7 +32,7 @@ ObjectsRet = collections.namedtuple('Dispatcher', ['tb', 'cd'])
 pytestmark = pytest.mark.usefixtures('cookiejar_and_cache')
 
 
-@pytest.yield_fixture
+@pytest.fixture
 def objects(qtbot, default_config, key_config_stub, tab_registry,
             host_blocker_stub):
     """Fixture providing a CommandDispatcher and a fake TabbedBrowser."""

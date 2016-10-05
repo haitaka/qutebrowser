@@ -46,6 +46,9 @@ class LogFailHandler(logging.Handler):
         logger = logging.getLogger(record.name)
         root_logger = logging.getLogger()
 
+        if logger.name == 'messagemock':
+            return
+
         for h in root_logger.handlers:
             if isinstance(h, catchlog_mod.LogCaptureHandler):
                 catchlog_handler = h
@@ -67,7 +70,7 @@ class LogFailHandler(logging.Handler):
                                  record.getMessage()))
 
 
-@pytest.yield_fixture(scope='session', autouse=True)
+@pytest.fixture(scope='session', autouse=True)
 def fail_on_logging():
     handler = LogFailHandler()
     logging.getLogger().addHandler(handler)

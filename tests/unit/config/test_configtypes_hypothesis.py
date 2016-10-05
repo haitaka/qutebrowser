@@ -36,13 +36,16 @@ def gen_classes():
             pass
         elif member is configtypes.MappingType:
             pass
+        elif member is configtypes.List:
+            yield functools.partial(member, inner_type=configtypes.Int())
+            yield functools.partial(member, inner_type=configtypes.Url())
         elif member is configtypes.FormatString:
             yield functools.partial(member, fields=['a', 'b'])
         elif issubclass(member, configtypes.BaseType):
             yield member
 
 
-@pytest.mark.usefixtures('qapp')
+@pytest.mark.usefixtures('qapp', 'config_tmpdir')
 @pytest.mark.parametrize('klass', gen_classes())
 @hypothesis.given(strategies.text())
 @hypothesis.example('\x00')

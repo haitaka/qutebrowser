@@ -28,6 +28,8 @@ import collections
 import faulthandler
 import traceback
 import warnings
+import json
+import inspect
 
 from PyQt5 import QtCore
 # Optional imports
@@ -35,33 +37,22 @@ try:
     import colorama
 except ImportError:
     colorama = None
-try:
-    import colorlog
-except ImportError:
-    colorlog = None
-else:
-    # WORKAROUND
-    # colorlog calls colorama.init() which we don't want, also it breaks our
-    # sys.stdout/sys.stderr if they are None. Bugreports:
-    # https://code.google.com/p/colorama/issues/detail?id=61
-    # https://github.com/borntyping/python-colorlog/issues/13
-    # This should be (partially) fixed in colorama 0.3.2.
-    # (stream only gets wrapped if it's not None)
-    if colorama is not None:
-        colorama.deinit()
+
+_log_inited = False
+
+COLORS = ['black', 'red', 'green', 'yellow', 'blue', 'purple', 'cyan', 'white']
+COLOR_ESCAPES = {color: '\033[{}m'.format(i)
+                 for i, color in enumerate(COLORS, start=30)}
+RESET_ESCAPE = '\033[0m'
+
 
 # Log formats to use.
-SIMPLE_FMT = '{asctime:8} {levelname}: {message}'
-EXTENDED_FMT = ('{asctime:8} {levelname:8} {name:10} {module}:{funcName}:'
-                '{lineno} {message}')
-SIMPLE_FMT_COLORED = ('%(green)s%(asctime)-8s%(reset)s '
-                      '%(log_color)s%(levelname)s%(reset)s: %(message)s')
-EXTENDED_FMT_COLORED = (
-    '%(green)s%(asctime)-8s%(reset)s '
-    '%(log_color)s%(levelname)-8s%(reset)s '
-    '%(cyan)s%(name)-10s %(module)s:%(funcName)s:%(lineno)s%(reset)s '
-    '%(log_color)s%(message)s%(reset)s'
-)
+SIMPLE_FMT = ('{green}{asctime:8}{reset} {log_color}{levelname}{reset}: '
+              '{message}')
+EXTENDED_FMT = ('{green}{asctime:8}{reset} '
+                '{log_color}{levelname:8}{reset} '
+                '{cyan}{name:10} {module}:{funcName}:{lineno}{reset} '
+                '{log_color}{message}{reset}')
 EXTENDED_FMT_HTML = (
     '<tr>'
     '<td><pre>%(green)s%(asctime)-8s%(reset)s</pre></td>'
@@ -81,12 +72,30 @@ LOG_COLORS = {
     'CRITICAL': 'red',
 }
 
-
 # We first monkey-patch logging to support our VDEBUG level before getting the
 # loggers.  Based on http://stackoverflow.com/a/13638084
 VDEBUG_LEVEL = 9
 logging.addLevelName(VDEBUG_LEVEL, 'VDEBUG')
 logging.VDEBUG = VDEBUG_LEVEL
+
+LOG_LEVELS = {
+    'VDEBUG': logging.VDEBUG,
+    'DEBUG': logging.DEBUG,
+    'INFO': logging.INFO,
+    'WARNING': logging.WARNING,
+    'ERROR': logging.ERROR,
+    'CRITICAL': logging.CRITICAL,
+}
+
+LOGGER_NAMES = [
+    'statusbar', 'completion', 'init', 'url',
+    'destroy', 'modes', 'webview', 'misc',
+    'mouse', 'procs', 'hints', 'keyboard',
+    'commands', 'signals', 'downloads',
+    'js', 'qt', 'rfc6266', 'ipc', 'shlexer',
+    'save', 'message', 'config', 'sessions',
+    'webelem'
+]
 
 
 def vdebug(self, msg, *args, **kwargs):
@@ -129,9 +138,21 @@ save = logging.getLogger('save')
 message = logging.getLogger('message')
 config = logging.getLogger('config')
 sessions = logging.getLogger('sessions')
+webelem = logging.getLogger('webelem')
 
 
 ram_handler = None
+console_handler = None
+console_filter = None
+
+
+def stub(suffix=''):
+    """Show a STUB: message for the calling function."""
+    function = inspect.stack()[1][3]
+    text = "STUB: {}".format(function)
+    if suffix:
+        text = '{} ({})'.format(text, suffix)
+    misc.warning(text)
 
 
 class CriticalQtWarning(Exception):
@@ -150,18 +171,29 @@ def init_log(args):
     if numeric_level > logging.DEBUG and args.debug:
         numeric_level = logging.DEBUG
 
-    console, ram = _init_handlers(numeric_level, args.color, args.loglines)
+    console, ram = _init_handlers(numeric_level, args.color, args.force_color,
+                                  args.json_logging, args.loglines)
     root = logging.getLogger()
+    global console_filter
     if console is not None:
         if args.logfilter is not None:
-            console.addFilter(LogFilter(args.logfilter.split(',')))
+            console_filter = LogFilter(args.logfilter.split(','))
+            console.addFilter(console_filter)
         root.addHandler(console)
     if ram is not None:
         root.addHandler(ram)
     root.setLevel(logging.NOTSET)
     logging.captureWarnings(True)
-    warnings.simplefilter('default')
+    _init_py_warnings()
     QtCore.qInstallMessageHandler(qt_message_handler)
+    global _log_inited
+    _log_inited = True
+
+
+def _init_py_warnings():
+    """Initialize Python warning handling."""
+    warnings.simplefilter('default')
+    warnings.filterwarnings('ignore', module='pdb', category=ResourceWarning)
 
 
 @contextlib.contextmanager
@@ -174,22 +206,35 @@ def disable_qt_msghandler():
         QtCore.qInstallMessageHandler(old_handler)
 
 
-def _init_handlers(level, color, ram_capacity):
+@contextlib.contextmanager
+def ignore_py_warnings(**kwargs):
+    """Contextmanager to temporarily disable certain Python warnings."""
+    warnings.filterwarnings('ignore', **kwargs)
+    yield
+    if _log_inited:
+        _init_py_warnings()
+
+
+def _init_handlers(level, color, force_color, json_logging, ram_capacity):
     """Init log handlers.
 
     Args:
         level: The numeric logging level.
         color: Whether to use color if available.
+        force_color: Force colored output.
+        json_logging: Output log lines in JSON (this disables all colors).
     """
     global ram_handler
+    global console_handler
     console_fmt, ram_fmt, html_fmt, use_colorama = _init_formatters(
-        level, color)
+        level, color, force_color, json_logging)
 
     if sys.stderr is None:
         console_handler = None
     else:
+        strip = False if force_color else None
         if use_colorama:
-            stream = colorama.AnsiToWin32(sys.stderr)
+            stream = colorama.AnsiToWin32(sys.stderr, strip=strip)
         else:
             stream = sys.stderr
         console_handler = logging.StreamHandler(stream)
@@ -207,39 +252,74 @@ def _init_handlers(level, color, ram_capacity):
     return console_handler, ram_handler
 
 
-def _init_formatters(level, color):
+def get_console_format(level):
+    """Get the log format the console logger should use.
+
+    Args:
+        level: The numeric logging level.
+
+    Return:
+        Format of the requested level.
+    """
+    return EXTENDED_FMT if level <= logging.DEBUG else SIMPLE_FMT
+
+
+def _init_formatters(level, color, force_color, json_logging):
     """Init log formatters.
 
     Args:
         level: The numeric logging level.
         color: Whether to use color if available.
+        force_color: Force colored output.
+        json_logging: Format lines as JSON (disables all color).
 
     Return:
         A (console_formatter, ram_formatter, use_colorama) tuple.
         console_formatter/ram_formatter: logging.Formatter instances.
         use_colorama: Whether to use colorama.
     """
-    if level <= logging.DEBUG:
-        console_fmt = EXTENDED_FMT
-        console_fmt_colored = EXTENDED_FMT_COLORED
-    else:
-        console_fmt = SIMPLE_FMT
-        console_fmt_colored = SIMPLE_FMT_COLORED
-    ram_formatter = logging.Formatter(EXTENDED_FMT, DATEFMT, '{')
+    console_fmt = get_console_format(level)
+    ram_formatter = ColoredFormatter(EXTENDED_FMT, DATEFMT, '{',
+                                     use_colors=False)
     html_formatter = HTMLFormatter(EXTENDED_FMT_HTML, DATEFMT,
                                    log_colors=LOG_COLORS)
     if sys.stderr is None:
         return None, ram_formatter, html_formatter, False
+
+    if json_logging:
+        console_formatter = JSONFormatter()
+        return console_formatter, ram_formatter, html_formatter, False
+
     use_colorama = False
-    if (colorlog is not None and (os.name == 'posix' or colorama) and
-            sys.stderr.isatty() and color):
-        console_formatter = colorlog.ColoredFormatter(
-            console_fmt_colored, DATEFMT, log_colors=LOG_COLORS)
-        if colorama:
+    color_supported = os.name == 'posix' or colorama
+
+    if color_supported and (sys.stderr.isatty() or force_color) and color:
+        use_colors = True
+        if colorama and os.name != 'posix':
             use_colorama = True
     else:
-        console_formatter = logging.Formatter(console_fmt, DATEFMT, '{')
+        use_colors = False
+
+    console_formatter = ColoredFormatter(console_fmt, DATEFMT, '{',
+                                         use_colors=use_colors)
     return console_formatter, ram_formatter, html_formatter, use_colorama
+
+
+def change_console_formatter(level):
+    """Change console formatter based on level.
+
+    Args:
+        level: The numeric logging level
+    """
+    if not isinstance(console_handler.formatter, ColoredFormatter):
+        # JSON Formatter being used for end2end tests
+        pass
+
+    use_colors = console_handler.formatter.use_colors
+    console_fmt = get_console_format(level)
+    console_formatter = ColoredFormatter(console_fmt, DATEFMT, '{',
+                                         use_colors=use_colors)
+    console_handler.setFormatter(console_formatter)
 
 
 def qt_message_handler(msg_type, context, msg):
@@ -309,6 +389,19 @@ def qt_message_handler(msg_type, context, msg):
             'QNetworkSession::State) to '
             'QNetworkReplyHttpImpl::_q_networkSessionStateChanged('
             'QNetworkSession::State)',
+        # https://bugreports.qt.io/browse/QTBUG-53989
+        "Image of format '' blocked because it is not considered safe. If you "
+            "are sure it is safe to do so, you can white-list the format by "
+            "setting the environment variable QTWEBKIT_IMAGEFORMAT_WHITELIST=",
+        # Installing Qt from the installer may cause it looking for SSL3 which
+        # may not be available on the system
+        "QSslSocket: cannot resolve SSLv3_client_method",
+        "QSslSocket: cannot resolve SSLv3_server_method",
+        # When enabling debugging with QtWebEngine
+        "Remote debugging server started successfully. Try pointing a "
+            "Chromium-based browser to ",
+        # https://github.com/The-Compiler/qutebrowser/issues/1287
+        "QXcbClipboard: SelectionRequest too old",
     ]
     if sys.platform == 'darwin':
         suppressed_msgs += [
@@ -400,16 +493,16 @@ class LogFilter(logging.Filter):
 
     def __init__(self, names):
         super().__init__()
-        self._names = names
+        self.names = names
 
     def filter(self, record):
         """Determine if the specified record is to be logged."""
-        if self._names is None:
+        if self.names is None:
             return True
         if record.levelno > logging.DEBUG:
             # More important than DEBUG, so we won't filter at all
             return True
-        for name in self._names:
+        for name in self.names:
             if record.name == name:
                 return True
             elif not record.name.startswith(name):
@@ -443,13 +536,14 @@ class RAMHandler(logging.Handler):
             # We don't log VDEBUG to RAM.
             self._data.append(record)
 
-    def dump_log(self, html=False):
-        """Dump the complete formatted log data as as string.
+    def dump_log(self, html=False, level='vdebug'):
+        """Dump the complete formatted log data as string.
 
         FIXME: We should do all the HTML formatter via jinja2.
         (probably obsolete when moving to a widget for logging,
         https://github.com/The-Compiler/qutebrowser/issues/34
         """
+        minlevel = LOG_LEVELS.get(level.upper(), VDEBUG_LEVEL)
         lines = []
         fmt = self.html_formatter.format if html else self.format
         self.acquire()
@@ -458,13 +552,43 @@ class RAMHandler(logging.Handler):
         finally:
             self.release()
         for record in records:
-            lines.append(fmt(record))
+            if record.levelno >= minlevel:
+                lines.append(fmt(record))
         return '\n'.join(lines)
+
+    def change_log_capacity(self, capacity):
+        self._data = collections.deque(self._data, maxlen=capacity)
+
+
+class ColoredFormatter(logging.Formatter):
+
+    """Logging formatter to output colored logs.
+
+    Attributes:
+        use_colors: Whether to do colored logging or not.
+    """
+
+    def __init__(self, fmt, datefmt, style, *, use_colors):
+        super().__init__(fmt, datefmt, style)
+        self.use_colors = use_colors
+
+    def format(self, record):
+        if self.use_colors:
+            color_dict = dict(COLOR_ESCAPES)
+            color_dict['reset'] = RESET_ESCAPE
+            log_color = LOG_COLORS[record.levelname]
+            color_dict['log_color'] = COLOR_ESCAPES[log_color]
+        else:
+            color_dict = {color: '' for color in COLOR_ESCAPES}
+            color_dict['reset'] = ''
+            color_dict['log_color'] = ''
+        record.__dict__.update(color_dict)
+        return super().format(record)
 
 
 class HTMLFormatter(logging.Formatter):
 
-    """Formatter for HTML-colored log messages, similar to colorlog.
+    """Formatter for HTML-colored log messages.
 
     Attributes:
         _log_colors: The colors to use for logging levels.
@@ -484,8 +608,7 @@ class HTMLFormatter(logging.Formatter):
         self._colordict = {}
         # We could solve this nicer by using CSS, but for this simple case this
         # works.
-        for color in ['black', 'red', 'green', 'yellow', 'blue', 'purple',
-                      'cyan', 'white']:
+        for color in COLORS:
             self._colordict[color] = '<font color="{}">'.format(color)
         self._colordict['reset'] = '</font>'
 
@@ -508,3 +631,18 @@ class HTMLFormatter(logging.Formatter):
     def formatTime(self, record, datefmt=None):
         out = super().formatTime(record, datefmt)
         return pyhtml.escape(out)
+
+
+class JSONFormatter(logging.Formatter):
+
+    """Formatter for JSON-encoded log messages."""
+
+    def format(self, record):
+        obj = {}
+        for field in ['created', 'msecs', 'levelname', 'name', 'module',
+                      'funcName', 'lineno', 'levelno']:
+            obj[field] = getattr(record, field)
+        obj['message'] = record.getMessage()
+        if record.exc_info is not None:
+            obj['traceback'] = super().formatException(record.exc_info)
+        return json.dumps(obj)

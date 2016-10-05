@@ -22,14 +22,13 @@
 import collections
 import functools
 
-from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt, QSize, QRect, QTimer
+from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt, QSize, QRect, QTimer, QUrl
 from PyQt5.QtWidgets import (QTabWidget, QTabBar, QSizePolicy, QCommonStyle,
                              QStyle, QStylePainter, QStyleOptionTab)
 from PyQt5.QtGui import QIcon, QPalette, QColor
 
 from qutebrowser.utils import qtutils, objreg, utils, usertypes
 from qutebrowser.config import config
-from qutebrowser.browser import webview
 
 
 PixelMetrics = usertypes.enum('PixelMetrics', ['icon_padding'],
@@ -51,6 +50,7 @@ class TabWidget(QTabWidget):
     def __init__(self, win_id, parent=None):
         super().__init__(parent)
         bar = TabBar(win_id)
+        self.setStyle(TabBarStyle(self.style()))
         self.setTabBar(bar)
         bar.tabCloseRequested.connect(self.tabCloseRequested)
         bar.tabMoved.connect(functools.partial(
@@ -67,13 +67,16 @@ class TabWidget(QTabWidget):
     @config.change_filter('tabs')
     def init_config(self):
         """Initialize attributes based on the config."""
+        if self is None:  # pragma: no cover
+            # WORKAROUND for PyQt 5.2
+            return
         tabbar = self.tabBar()
         self.setMovable(config.get('tabs', 'movable'))
         self.setTabsClosable(False)
         position = config.get('tabs', 'position')
         selection_behavior = config.get('tabs', 'select-on-remove')
         self.setTabPosition(position)
-        tabbar.vertical = position in (QTabWidget.West, QTabWidget.East)
+        tabbar.vertical = position in [QTabWidget.West, QTabWidget.East]
         tabbar.setSelectionBehaviorOnRemove(selection_behavior)
         tabbar.refresh()
 
@@ -99,21 +102,39 @@ class TabWidget(QTabWidget):
 
     def update_tab_title(self, idx):
         """Update the tab text for the given tab."""
-        widget = self.widget(idx)
-        page_title = self.page_title(idx).replace('&', '&&')
+        fields = self.get_tab_fields(idx)
+        fields['title'] = fields['title'].replace('&', '&&')
+        fields['index'] = idx + 1
+
+        fmt = config.get('tabs', 'title-format')
+        title = '' if fmt is None else fmt.format(**fields)
+        self.tabBar().setTabText(idx, title)
+
+    def get_tab_fields(self, idx):
+        """Get the tab field data."""
+        tab = self.widget(idx)
+        page_title = self.page_title(idx)
 
         fields = {}
-        if widget.load_status == webview.LoadStatus.loading:
-            fields['perc'] = '[{}%] '.format(widget.progress)
+        fields['id'] = tab.tab_id
+        fields['title'] = page_title
+        fields['title_sep'] = ' - ' if page_title else ''
+        fields['perc_raw'] = tab.progress()
+
+        if tab.load_status() == usertypes.LoadStatus.loading:
+            fields['perc'] = '[{}%] '.format(tab.progress())
         else:
             fields['perc'] = ''
-        fields['perc_raw'] = widget.progress
-        fields['title'] = page_title
-        fields['index'] = idx + 1
-        fields['id'] = widget.tab_id
-        fields['title_sep'] = ' - ' if page_title else ''
-        y = widget.scroll_pos[1]
-        if y <= 0:
+
+        try:
+            fields['host'] = self.tab_url(idx).host()
+        except qtutils.QtValueError:
+            fields['host'] = ''
+
+        y = tab.scroller.pos_perc()[1]
+        if y is None:
+            scroll_pos = '???'
+        elif y <= 0:
             scroll_pos = 'top'
         elif y >= 100:
             scroll_pos = 'bot'
@@ -121,9 +142,7 @@ class TabWidget(QTabWidget):
             scroll_pos = '{:2}%'.format(y)
 
         fields['scroll_pos'] = scroll_pos
-
-        fmt = config.get('tabs', 'title-format')
-        self.tabBar().setTabText(idx, fmt.format(**fields))
+        return fields
 
     @config.change_filter('tabs', 'title-format')
     def update_tab_titles(self):
@@ -204,6 +223,21 @@ class TabWidget(QTabWidget):
         """Emit the tab_index_changed signal if the current tab changed."""
         self.tabBar().on_change()
         self.tab_index_changed.emit(index, self.count())
+
+    def tab_url(self, idx):
+        """Get the URL of the tab at the given index.
+
+        Return:
+            The tab URL as QUrl.
+        """
+        tab = self.widget(idx)
+        if tab is None:
+            url = QUrl()
+        else:
+            url = tab.url()
+        # It's possible for url to be invalid, but the caller will handle that.
+        qtutils.ensure_valid(url)
+        return url
 
 
 class TabBar(QTabBar):
@@ -513,11 +547,11 @@ class TabBarStyle(QCommonStyle):
             style: The base/"parent" style.
         """
         self._style = style
-        for method in ('drawComplexControl', 'drawItemPixmap',
+        for method in ['drawComplexControl', 'drawItemPixmap',
                        'generatedIconPixmap', 'hitTestComplexControl',
-                       'itemPixmapRect', 'itemTextRect',
-                       'polish', 'styleHint', 'subControlRect', 'unpolish',
-                       'drawItemText', 'sizeFromContents', 'drawPrimitive'):
+                       'itemPixmapRect', 'itemTextRect', 'polish', 'styleHint',
+                       'subControlRect', 'unpolish', 'drawItemText',
+                       'sizeFromContents', 'drawPrimitive']:
             target = getattr(self._style, method)
             setattr(self, method, functools.partial(target))
         super().__init__()
@@ -623,6 +657,12 @@ class TabBarStyle(QCommonStyle):
         if sr == QStyle.SE_TabBarTabText:
             layouts = self._tab_layout(opt)
             return layouts.text
+        elif sr == QStyle.SE_TabWidgetTabBar:
+            # Need to use super() because we also use super() to render
+            # element in drawControl(); otherwise, we may get bit by
+            # style differences...
+            rct = super().subElementRect(sr, opt, widget)
+            return rct
         else:
             return self._style.subElementRect(sr, opt, widget)
 

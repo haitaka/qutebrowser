@@ -65,6 +65,8 @@ def update_pdfjs(target_version=None):
         url = ('https://github.com/mozilla/pdf.js/releases/download/'
                'v{0}/pdfjs-{0}-dist.zip').format(target_version)
 
+    os.chdir(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          '..', '..'))
     target_path = os.path.join('qutebrowser', '3rdparty', 'pdfjs')
     print("=> Downloading pdf.js {}".format(version))
     try:
@@ -82,6 +84,31 @@ def update_pdfjs(target_version=None):
     urllib.request.urlcleanup()
 
 
+def update_dmg_makefile():
+    """Update fancy-dmg Makefile.
+
+    See https://el-tramo.be/blog/fancy-dmg/
+    """
+    print("Updating fancy-dmg Makefile...")
+    url = 'https://raw.githubusercontent.com/remko/fancy-dmg/master/Makefile'
+    target_path = os.path.join('scripts', 'dev', 'Makefile-dmg')
+    urllib.request.urlretrieve(url, target_path)
+    urllib.request.urlcleanup()
+
+
+def update_ace():
+    """Update ACE.
+
+    See https://ace.c9.io/ and https://github.com/ajaxorg/ace-builds/
+    """
+    print("Updating ACE...")
+    url = 'https://raw.githubusercontent.com/ajaxorg/ace-builds/master/src/ace.js'
+    target_path = os.path.join('tests', 'end2end', 'data', 'hints', 'ace',
+                               'ace.js')
+    urllib.request.urlretrieve(url, target_path)
+    urllib.request.urlcleanup()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -89,9 +116,15 @@ def main():
         help='Specify pdfjs version. If not given, '
         'the latest version is used.',
         required=False, metavar='VERSION')
+    parser.add_argument('--fancy-dmg', help="Update fancy-dmg Makefile",
+                        action='store_true')
     args = parser.parse_args()
 
     update_pdfjs(args.pdfjs)
+    update_ace()
+    if args.fancy_dmg:
+        update_dmg_makefile()
+
 
 if __name__ == '__main__':
     main()

@@ -23,8 +23,7 @@ import os
 
 from PyQt5.QtCore import QUrl
 
-from qutebrowser.browser import webelem
-from qutebrowser.utils import utils
+from qutebrowser.utils import utils, javascript
 
 
 class PDFJSNotFound(Exception):
@@ -51,9 +50,8 @@ def generate_pdfjs_page(url):
     """
     viewer = get_pdfjs_res('web/viewer.html').decode('utf-8')
     script = _generate_pdfjs_script(url)
-    html_page = viewer.replace(
-        '</body>', '</body><script>{}</script>'.format(script)
-    )
+    html_page = viewer.replace('</body>',
+                               '</body><script>{}</script>'.format(script))
     return html_page
 
 
@@ -66,11 +64,11 @@ def _generate_pdfjs_script(url):
     return (
         'PDFJS.verbosity = PDFJS.VERBOSITY_LEVELS.info;\n'
         'PDFView.open("{url}");\n'
-    ).format(url=webelem.javascript_escape(url.toString(QUrl.FullyEncoded)))
+    ).format(url=javascript.string_escape(url.toString(QUrl.FullyEncoded)))
 
 
 def fix_urls(asset):
-    """Take a html page and replace each relative URL with an absolute.
+    """Take an html page and replace each relative URL with an absolute.
 
     This is specialized for pdf.js files and not a general purpose function.
 

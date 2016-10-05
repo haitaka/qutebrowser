@@ -11,9 +11,9 @@ This document contains guidelines for contributing to qutebrowser, as well as
 useful hints when doing so.
 
 If anything mentioned here would prevent you from contributing, please let me
-know, and contribute anyways! The guidelines are only meant to make life easier
-for me, but if you don't follow anything in here, I won't be mad at you. I will
-probably change it for you then, though.
+know, and contribute anyways! The guidelines are meant to make life easier for
+me, but if you don't follow everything in here, I won't be mad at you. In
+fact, I will probably change it for you.
 
 If you have any problems, I'm more than happy to help! You can get help in
 several ways:
@@ -44,7 +44,7 @@ require little/no coding]
 
 There are also some things to do if you don't want to write code:
 
-* Help the community, e.g. on the mailinglist and the IRC channel.
+* Help the community, e.g., on the mailinglist and the IRC channel.
 * Improve the documentation.
 * Help on the website and graphics (logo, etc.).
 
@@ -60,7 +60,7 @@ git clone https://github.com/The-Compiler/qutebrowser.git
 
 If you don't know git, a http://git-scm.com/[git cheatsheet] might come in
 handy. Of course, if using git is the issue which prevents you from
-contributing, feel free to send normal patches instead, e.g. generated via
+contributing, feel free to send normal patches instead, e.g., generated via
 `diff -Nur`.
 
 Getting patches
@@ -77,7 +77,7 @@ based on your changes like this:
 ----
 git format-patch origin/master <1>
 ----
-<1> Replace `master` by the branch your work was based on, e.g.
+<1> Replace `master` by the branch your work was based on, e.g.,
 `origin/develop`.
 
 Useful utilities
@@ -89,7 +89,7 @@ Checkers
 qutebrowser uses http://tox.readthedocs.org/en/latest/[tox] to run its
 unittests and several linters/checkers.
 
-Currently, following tox environments are available:
+Currently, the following tox environments are available:
 
 * Tests using https://www.pytest.org[pytest]:
   - `py34`: Run pytest for python-3.4.
@@ -117,18 +117,18 @@ Currently, following tox environments are available:
     - VCS conflict markers
     - common spelling mistakes
 
-The default test suite is run with `tox`, the list of default
-environments is obtained with `tox -l` .
+The default test suite is run with `tox`; the list of default
+environments is obtained with `tox -l`.
 
 Please make sure the checks run without any warnings on your new contributions.
 
-There's of course the possibility of false-positives, and the following
+There's always the possibility of false positives; the following
 techniques are useful to handle these:
 
 * Use `_foo` for unused parameters, with `foo` being a descriptive name. Using
 `_` is discouraged.
-* If you think you have a good reason to suppress a message, add the following
-comment:
+* If you think you have a good reason to suppress a message, then add the 
+following comment:
 +
 ----
 # pylint: disable=message-name
@@ -158,11 +158,11 @@ Examples:
 # run only pytest tests which failed in last run:
 tox -e py35 -- --lf
 
-# run only the integration feature tests:
-tox -e py35 -- tests/integration/features
+# run only the end2end feature tests:
+tox -e py35 -- tests/end2end/features
 
 # run everything with undo in the generated name, based on the scenario text
-tox -e py35 -- tests/integration/features/test_tabs.py -k undo
+tox -e py35 -- tests/end2end/features/test_tabs_bdd.py -k undo
 
 # run coverage test for specific file (updates htmlcov/index.html)
 tox -e py35-cov -- tests/unit/browser/test_webelem.py
@@ -174,18 +174,22 @@ Profiling
 In the _scripts/_ subfolder there's a `run_profile.py` which profiles the code
 and shows a graphical representation of what takes how much time.
 
-It needs https://pypi.python.org/pypi/pyprof2calltree/[pyprof2calltree] and
-http://kcachegrind.sourceforge.net/html/Home.html[KCacheGrind]. It uses the
-built-in Python https://docs.python.org/3.4/library/profile.html[cProfile]
-module.
+It uses the built-in Python
+https://docs.python.org/3.4/library/profile.html[cProfile] module and can show
+the output in four different ways:
+
+* Raw profile file (`--profile-tool=none`)
+* https://pypi.python.org/pypi/pyprof2calltree/[pyprof2calltree] and http://kcachegrind.sourceforge.net/html/Home.html[KCacheGrind] (`--profile-tool=kcachegrind`)
+* https://jiffyclub.github.io/snakeviz/[SnakeViz] (`--profile-tool=snakeviz`)
+* https://github.com/jrfonseca/gprof2dot[gprof2dot] (needs `dot` from http://graphviz.org/[Graphviz] and http://feh.finalrewind.org/[feh])
 
 Debugging
 ~~~~~~~~~
 
-In the `qutebrowser.utils.debug` module there are some useful functions for
-debugging.
+There are some useful functions for debugging in the `qutebrowser.utils.debug`
+module.
 
-When starting qutebrowser with the `--debug` flag you also get useful debug
+When starting qutebrowser with the `--debug` flag, you also get useful debug
 logs. You can add +--logfilter _category[,category,...]_+ to restrict logging
 to the given categories.
 
@@ -212,7 +216,6 @@ Documentation of used Python libraries:
 * http://pythonhosted.org/setuptools/[setuptools]
 * http://cx-freeze.readthedocs.org/en/latest/overview.html[cx_Freeze]
 * https://pypi.python.org/pypi/colorama[colorama]
-* https://pypi.python.org/pypi/colorlog[colorlog]
 
 Related RFCs and standards:
 
@@ -273,10 +276,10 @@ Hints
 Python and Qt objects
 ~~~~~~~~~~~~~~~~~~~~~
 
-For many tasks, there are solutions in both Qt and the Python standard library
-available.
+For many tasks, there are solutions available in both Qt and the Python
+standard library.
 
-In qutebrowser, the policy is usually using the Python libraries, as they
+In qutebrowser, the policy is usually to use the Python libraries, as they
 provide exceptions and other benefits.
 
 There are some exceptions to that:
@@ -289,7 +292,7 @@ slots.
 
 When using Qt objects, two issues must be taken care of:
 
-* Methods of Qt objects report their status by using their return values,
+* Methods of Qt objects report their status with their return values,
 instead of using exceptions.
 +
 If a function gets or returns a Qt object which has an `.isValid()`
@@ -301,13 +304,12 @@ on all such objects. It will raise
 If a function returns something else on error, the return value should
 carefully be checked.
 
-* Methods of Qt objects have certain maximum values, based on their
+* Methods of Qt objects have certain maximum values based on their
 underlying C++ types.
 +
-When passing a numeric parameter to a Qt function, all numbers should
-be range-checked using `qutebrowser.qtutils.check_overflow`, or
-passing a value which is too large should be avoided by other means
-(e.g. by setting a maximum value for a config object).
+To avoid passing too large of a numeric parameter to a Qt function, all 
+numbers should be range-checked using `qutebrowser.qtutils.check_overflow`,
+or by other means (e.g. by setting a maximum value for a config object).
 
 [[object-registry]]
 The object registry
@@ -336,8 +338,8 @@ window=_win-id_, tab=_tab-id_])+. The default scope is `global`.
 All objects can be printed by starting with the `--debug` flag and using the
 `:debug-all-objects` command.
 
-The registry is mainly used for <<commands,command handlers>> but also can be
-useful in places where using Qt's
+The registry is mainly used for <<commands,command handlers>>, but it can
+also be useful in places where using Qt's
 http://doc.qt.io/qt-5/signalsandslots.html[signals and slots] mechanism would
 be difficult.
 
@@ -347,7 +349,7 @@ Logging
 Logging is used at various places throughout the qutebrowser code. If you add a
 new feature, you should also add some strategic debug logging.
 
-Unless other Python projects, qutebrowser doesn't use a logger per file,
+Unlike other Python projects, qutebrowser doesn't use a logger per file,
 instead it uses custom-named loggers.
 
 The existing loggers are defined in `qutebrowser.utils.log`. If your feature
@@ -371,7 +373,7 @@ The following logging levels are available for every logger:
 
 [width="75%",cols="25%,75%"]
 |=======================================================================
-|criticial |Critical issue, qutebrowser can't continue to run.
+|critical  |Critical issue, qutebrowser can't continue to run.
 |error     |There was an issue and some kind of operation was abandoned.
 |warning   |There was an issue but the operation can continue running.
 |info      |General informational messages.
@@ -410,42 +412,66 @@ selects which object registry (global, per-tab, etc.) to use.  See the
 <<object-registry,object registry>> section for details.
 
 There are also other arguments to customize the way the command is
-registered, see the class documentation for `register` in
+registered; see the class documentation for `register` in
 `qutebrowser.commands.cmdutils` for details.
 
 The types of the function arguments are inferred based on their default values,
-e.g. an argument `foo=True` will be converted to a flag `-f`/`--foo` in
+e.g., an argument `foo=True` will be converted to a flag `-f`/`--foo` in
 qutebrowser's commandline.
 
-This behavior can be overridden using Python's
-http://legacy.python.org/dev/peps/pep-3107/[function annotations]. The
-annotation should always be a `dict`, like this:
+The type can be overridden using Python's
+http://legacy.python.org/dev/peps/pep-3107/[function annotations]:
 
 [source,python]
 ----
 @cmdutils.register(...)
-def foo(bar: {'type': int}, baz=True):
+def foo(bar: int, baz=True):
     ...
 ----
 
-The following keys are supported in the dict:
-
-* `type`: The type this value should have. The value entered by the user is
-then automatically checked. Possible values:
+Possible values:
     - A callable (`int`, `float`, etc.): Gets called to validate/convert the
       value.
-    - A string: The value must match exactly (mainly useful with tuples to get
-      a choice of values, see below).
     - A python enum type: All members of the enum are possible values.
-    - A tuple of multiple types above: Any of these types are valid values,
-      e.g. `('foo', 'bar')` or `(int, 'foo')`.
-* `flag`: The flag to be used, as 1-char string (default: First char of the
-long name).
-* `nargs`: Gets passed to argparse, see
-https://docs.python.org/dev/library/argparse.html#nargs[its documentation].
+    - A `typing.Union` of multiple types above: Any of these types are valid
+      values, e.g., `typing.Union[str, int]`
+
+You can customize how an argument is handled using the `@cmdutils.argument`
+decorator *after* `@cmdutils.register`. This can, for example, be used to 
+customize the flag an argument should get:
+
+[source,python]
+----
+@cmdutils.register(...)
+@cmdutils.argument('bar', flag='c')
+def foo(bar):
+    ...
+----
+
+For a `str` argument, you can restrict the allowed strings using `choices`:
+
+[source,python]
+----
+@cmdutils.register(...)
+@cmdutils.argument('bar', choices=['val1', 'val2'])
+def foo(bar: str):
+    ...
+----
+
+For `typing.Union` types, the given `choices` are only checked if other types
+(like `int`) don't match.
+
+The following arguments are supported for `@cmdutils.argument`:
+
+- `flag`: Customize the short flag (`-x`) the argument will get.
+- `win_id=True`: Mark the argument as special window ID argument
+- `count=True`: Mark the argument as special count argument
+- `hide=True`: Hide the argument from the documentation
+- `completion`: A `usertypes.Completion` member to use as completion.
+- `choices`: The allowed string choices for the argument.
 
 The name of an argument will always be the parameter name, with any trailing
-underscores stripped.
+underscores stripped and underscores replaced by dashes.
 
 [[handling-urls]]
 Handling URLs
@@ -455,13 +481,13 @@ qutebrowser handles two different types of URLs: URLs as a string, and URLs as
 the Qt `QUrl` type. As this can get confusing quickly, please follow the
 following guidelines:
 
-* Convert a string to a QUrl object as early as possible, i.e. directly after
+* Convert a string to a QUrl object as early as possible, i.e., directly after
 the user did enter it.
     - Use `utils.urlutils.fuzzy_url` if the URL is entered by the user
       somewhere.
     - Be sure you handle `utils.urlutils.FuzzyError` and display an error
       message to the user.
-* Convert a `QUrl` object to a string as late as possible, e.g. before
+* Convert a `QUrl` object to a string as late as possible, i.e., before
 displaying it to the user.
     - If you want to display the URL to the user, use `url.toDisplayString()`
       so password information is removed.
@@ -487,8 +513,8 @@ This is needed so valgrind handles self-modifying code correctly:
 [quote]
 ____
 This option controls Valgrind's detection of self-modifying code. If no
-checking is done, if a program executes some code, then overwrites it with new
-code, and executes the new code, Valgrind will continue to execute the
+checking is done and a program executes some code, overwrites it with new
+code, and then executes the new code, Valgrind will continue to execute the
 translations it made for the old code. This will likely lead to incorrect
 behavior and/or crashes.
 
@@ -568,10 +594,7 @@ Return:
 * The layout of a class should be like this:
   - docstring
   - `__magic__` methods
-  - properties
-  - _private methods
-  - public methods
-  - `on_*` methods
+  - other methods
   - overrides of Qt methods
 
 Checklists
@@ -605,6 +628,7 @@ qutebrowser release
 ~~~~~~~~~~~~~~~~~~~
 
 * Make sure there are no unstaged changes and the tests are green.
+* Run `x=... y=...` to set the respective shell variables
 
 * Add newest config to `tests/unit/config/old_configs` and update `test_upgrade_version`
     - `python -m qutebrowser --basedir conf :quit`
@@ -612,29 +636,20 @@ qutebrowser release
     - `rm -r conf`
     - commit
 * Adjust `__version_info__` in `qutebrowser/__init__.py`.
-* Remove *(unreleased)* from changelog.
+* Update changelog (remove *(unreleased)*)
 * Run tests again
-* Run `asciidoc2html.py`.
 * Commit
 
-* Create annotated git tag (`git tag -s "v0.X.Y" -m "Release v0.X.Y"`)
+* Create annotated git tag (`git tag -s "v0.$x.$y" -m "Release v0.$x.$y"`)
+* `git push origin`; `git push origin v0.$x.$y`
 * If committing on minor branch, cherry-pick release commit to master.
-* `git push origin`; `git push origin v0.X.Y`
 * Create release on github
 * Mark the milestone at https://github.com/The-Compiler/qutebrowser/milestones
 as closed.
 
-* Run `scripts/dev/build_release.py` on Linux to build an sdist
-* Upload to PyPI: `twine upload dist/foo{,.asc}`
-* Create Windows packages via `C:\Python34_x32\python scripts\dev\build_release.py --asciidoc C:\Python27\python C:\asciidoc-8.6.9\asciidoc.py`
-* Upload to github
-
-* Upload to qutebrowser.org with checksum/GPG
-    - On server: `sudo mkdir -p /srv/http/qutebrowser/releases/v0.X.Y/windows`
-    - `rsync -avPh dist/ tonks:`
-    - On server: `sudo mv qutebrowser-0.X.Y.tar.gz* /srv/http/qutebrowser/releases/v0.X.Y`
-    - Upload windows release:
-           - `scp bb-win8:proj/qutebrowser/qutebrowser-0.X.Y-windows.zip .`
-           - `aunpack qutebrowser-0.X.Y-windows.zip`
-           - `sudo mv qutebrowser-0.X.Y-windows/* /srv/http/qutebrowser/releases/v0.6.0/windows`
+* Linux: Run `python3 scripts/dev/build_release.py --upload v0.$x.$y`
+* Windows: Run `C:\Python34_x32\python scripts\dev\build_release.py --asciidoc C:\Python27\python C:\asciidoc-8.6.9\asciidoc.py --upload v0.X.Y` (replace X/Y by hand)
+* OS X: Run `python3 scripts/dev/build_release.py --upload v0.X.Y` (replace X/Y by hand)
+* On server: Run `python3 scripts/dev/download_release.py v0.X.Y` (replace X/Y by hand)
+* Update `qutebrowser-git` PKGBUILD if dependencies/install changed
 * Announce to qutebrowser mailinglist

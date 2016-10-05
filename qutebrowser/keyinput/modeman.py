@@ -21,7 +21,7 @@
 
 import functools
 
-from PyQt5.QtCore import pyqtSignal, Qt, QObject, QEvent
+from PyQt5.QtCore import pyqtSlot, pyqtSignal, Qt, QObject, QEvent
 from PyQt5.QtWidgets import QApplication
 
 from qutebrowser.keyinput import modeparsers, keyparser
@@ -78,6 +78,8 @@ def init(win_id, parent):
                                                   warn=False),
         KM.yesno: modeparsers.PromptKeyParser(win_id, modeman),
         KM.caret: modeparsers.CaretKeyParser(win_id, modeman),
+        KM.set_mark: modeparsers.MarkKeyParser(win_id, KM.set_mark, modeman),
+        KM.jump_mark: modeparsers.MarkKeyParser(win_id, KM.jump_mark, modeman),
     }
     objreg.register('keyparsers', keyparsers, scope='window', window=win_id)
     modeman.destroyed.connect(
@@ -168,14 +170,13 @@ class ModeManager(QObject):
         handled = parser.handle(event)
 
         is_non_alnum = (
-            event.modifiers() not in (Qt.NoModifier, Qt.ShiftModifier) or
+            event.modifiers() not in [Qt.NoModifier, Qt.ShiftModifier] or
             not event.text().strip())
 
         if handled:
             filter_this = True
-        elif (parser.passthrough or
-                self._forward_unbound_keys == 'all' or
-                (self._forward_unbound_keys == 'auto' and is_non_alnum)):
+        elif (parser.passthrough or self._forward_unbound_keys == 'all' or
+              (self._forward_unbound_keys == 'auto' and is_non_alnum)):
             filter_this = False
         else:
             filter_this = True
@@ -189,8 +190,8 @@ class ModeManager(QObject):
                             "passthrough: {}, is_non_alnum: {} --> "
                             "filter: {} (focused: {!r})".format(
                                 handled, self._forward_unbound_keys,
-                                parser.passthrough, is_non_alnum,
-                                filter_this, focus_widget))
+                                parser.passthrough, is_non_alnum, filter_this,
+                                focus_widget))
         return filter_this
 
     def _eventFilter_keyrelease(self, event):
@@ -223,6 +224,7 @@ class ModeManager(QObject):
         assert isinstance(mode, usertypes.KeyMode)
         assert parser is not None
         self._parsers[mode] = parser
+        parser.request_leave.connect(self.leave)
 
     def enter(self, mode, reason=None, only_if_normal=False):
         """Enter a new mode.
@@ -268,17 +270,21 @@ class ModeManager(QObject):
             raise cmdexc.CommandError("Mode {} does not exist!".format(mode))
         self.enter(m, 'command')
 
+    @pyqtSlot(usertypes.KeyMode, str)
     def leave(self, mode, reason=None):
         """Leave a key mode.
 
         Args:
-            mode: The name of the mode to leave.
+            mode: The mode to leave as a usertypes.KeyMode member.
             reason: Why the mode was left.
         """
         if self.mode != mode:
             raise NotInModeError("Not in mode {}!".format(mode))
         log.modes.debug("Leaving mode {}{}".format(
             mode, '' if reason is None else ' (reason: {})'.format(reason)))
+        # leaving a mode implies clearing keychain, see
+        # https://github.com/The-Compiler/qutebrowser/issues/1805
+        self.clear_keychain()
         self.mode = usertypes.KeyMode.normal
         self.left.emit(mode, self.mode, self._win_id)
 

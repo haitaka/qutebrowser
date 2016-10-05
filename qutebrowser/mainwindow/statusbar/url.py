@@ -19,9 +19,9 @@
 
 """URL displayed in the statusbar."""
 
-from PyQt5.QtCore import pyqtSlot, pyqtProperty, Qt
+from PyQt5.QtCore import pyqtSlot, pyqtProperty, Qt, QUrl
 
-from qutebrowser.browser import webview
+from qutebrowser.browser import browsertab
 from qutebrowser.mainwindow.statusbar import textbase
 from qutebrowser.config import style
 from qutebrowser.utils import usertypes
@@ -119,29 +119,32 @@ class UrlText(textbase.TextBase):
         Args:
             status_str: The LoadStatus as string.
         """
-        status = webview.LoadStatus[status_str]
-        if status in (webview.LoadStatus.success,
-                      webview.LoadStatus.success_https,
-                      webview.LoadStatus.error,
-                      webview.LoadStatus.warn):
+        status = usertypes.LoadStatus[status_str]
+        if status in [usertypes.LoadStatus.success,
+                      usertypes.LoadStatus.success_https,
+                      usertypes.LoadStatus.error,
+                      usertypes.LoadStatus.warn]:
             self._normal_url_type = UrlType[status_str]
         else:
             self._normal_url_type = UrlType.normal
         self._update_url()
 
-    @pyqtSlot(str)
-    def set_url(self, s):
+    @pyqtSlot(QUrl)
+    def set_url(self, url):
         """Setter to be used as a Qt slot.
 
         Args:
-            s: The URL to set as string.
+            url: The URL to set as QUrl, or None.
         """
-        self._normal_url = s
+        if url is None:
+            self._normal_url = None
+        else:
+            self._normal_url = url.toDisplayString()
         self._normal_url_type = UrlType.normal
         self._update_url()
 
-    @pyqtSlot(str, str, str)
-    def set_hover_url(self, link, _title, _text):
+    @pyqtSlot(str)
+    def set_hover_url(self, link):
         """Setter to be used as a Qt slot.
 
         Saves old shown URL in self._old_url and restores it later if a link is
@@ -149,19 +152,21 @@ class UrlText(textbase.TextBase):
 
         Args:
             link: The link which was hovered (string)
-            _title: The title of the hovered link (string)
-            _text: The text of the hovered link (string)
         """
         if link:
-            self._hover_url = link
+            qurl = QUrl(link)
+            if qurl.isValid():
+                self._hover_url = qurl.toDisplayString()
+            else:
+                self._hover_url = link
         else:
             self._hover_url = None
         self._update_url()
 
-    @pyqtSlot(int)
+    @pyqtSlot(browsertab.AbstractTab)
     def on_tab_changed(self, tab):
         """Update URL if the tab changed."""
         self._hover_url = None
-        self._normal_url = tab.cur_url.toDisplayString()
-        self.on_load_status_changed(tab.load_status.name)
+        self._normal_url = tab.url().toDisplayString()
+        self.on_load_status_changed(tab.load_status().name)
         self._update_url()

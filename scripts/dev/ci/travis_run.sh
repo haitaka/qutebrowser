@@ -1,15 +1,11 @@
 #!/bin/bash
 
 if [[ $DOCKER ]]; then
-    # To build a fresh image:
-    # docker build -t img misc/docker/$DOCKER
-    # docker run --privileged -v $PWD:/outside img
-
-    docker run --privileged -v $PWD:/outside \
-        thecompiler/qutebrowser-manual:$DOCKER
+    docker run --privileged -v $PWD:/outside -e QUTE_BDD_WEBENGINE=$QUTE_BDD_WEBENGINE qutebrowser/travis:$DOCKER
 else
     args=()
     [[ $TESTENV == docs ]] && args=('--no-authors')
+    [[ $TRAVIS_OS_NAME == osx ]] && args=('--qute-bdd-webengine')
 
     tox -e $TESTENV -- "${args[@]}"
 fi

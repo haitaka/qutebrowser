@@ -31,7 +31,7 @@ import argparse
 import shlex
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir,
-                os.pardir))
+                                os.pardir))
 
 import qutebrowser.qutebrowser
 
@@ -66,6 +66,10 @@ def main():
 
     profiler = cProfile.Profile()
     profiler.runcall(qutebrowser.qutebrowser.main)
+
+    # If we have an exception after here, we don't want the qutebrowser
+    # exception hook to take over.
+    sys.excepthook = sys.__excepthook__
     profiler.dump_stats(profilefile)
 
     if args.profile_tool == 'none':
@@ -77,7 +81,7 @@ def main():
     elif args.profile_tool == 'kcachegrind':
         callgraphfile = os.path.join(tempdir, 'callgraph')
         subprocess.call(['pyprof2calltree', '-k', '-i', profilefile,
-                        '-o', callgraphfile])
+                         '-o', callgraphfile])
     elif args.profile_tool == 'snakeviz':
         subprocess.call(['snakeviz', profilefile])
 

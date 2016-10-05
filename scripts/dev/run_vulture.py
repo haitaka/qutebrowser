@@ -32,8 +32,12 @@ import vulture
 import qutebrowser.app  # pylint: disable=unused-import
 from qutebrowser.commands import cmdutils
 from qutebrowser.utils import utils
-from qutebrowser.browser import rfc6266
-from qutebrowser.browser.network import qutescheme
+from qutebrowser.browser.webkit import rfc6266
+# To run the decorators from there
+# pylint: disable=unused-import
+from qutebrowser.browser.webkit.network import webkitqutescheme
+# pylint: enable=unused-import
+from qutebrowser.browser import qutescheme
 
 
 def whitelist_generator():
@@ -44,69 +48,59 @@ def whitelist_generator():
 
     # pyPEG2 classes
     for name, member in inspect.getmembers(rfc6266, inspect.isclass):
-        for attr in ('grammar', 'regex'):
+        for attr in ['grammar', 'regex']:
             if hasattr(member, attr):
-                yield 'qutebrowser.browser.rfc6266.{}.{}'.format(name, attr)
+                yield 'qutebrowser.browser.webkit.rfc6266.{}.{}'.format(name,
+                                                                        attr)
 
     # PyQt properties
-    for attr in ('prompt_active', 'command_active', 'insert_active',
-                 'caret_mode'):
+    for attr in ['prompt_active', 'command_active', 'insert_active',
+                 'caret_mode']:
         yield 'qutebrowser.mainwindow.statusbar.bar.StatusBar.' + attr
     yield 'qutebrowser.mainwindow.statusbar.url.UrlText.urltype'
 
     # Not used yet, but soon (or when debugging)
-    yield 'qutebrowser.config.configtypes.Regex'
     yield 'qutebrowser.utils.debug.log_events'
     yield 'qutebrowser.utils.debug.log_signals'
     yield 'qutebrowser.utils.debug.qflags_key'
     yield 'qutebrowser.utils.qtutils.QtOSError.qt_errno'
-    yield 'qutebrowser.utils.usertypes.NeighborList.firstitem'
     yield 'scripts.utils.bg_colors'
-    yield 'scripts.utils.print_subtitle'
+    yield 'qutebrowser.browser.webelem.AbstractWebElement.style_property'
+    yield 'qutebrowser.config.configtypes.Float'
 
     # Qt attributes
     yield 'PyQt5.QtWebKit.QWebPage.ErrorPageExtensionReturn().baseUrl'
     yield 'PyQt5.QtWebKit.QWebPage.ErrorPageExtensionReturn().content'
     yield 'PyQt5.QtWebKit.QWebPage.ErrorPageExtensionReturn().encoding'
     yield 'PyQt5.QtWebKit.QWebPage.ErrorPageExtensionReturn().fileNames'
-    yield 'PyQt5.QtGui.QAbstractTextDocumentLayout.PaintContext().clip'
     yield 'PyQt5.QtWidgets.QStyleOptionViewItem.backgroundColor'
 
-    # qute:... handlers
-    for func in qutescheme.HANDLERS.values():
-        yield 'qutebrowser.browser.network.qutescheme.' + func.__name__
-
-    # Globals
-    # https://bitbucket.org/jendrikseipp/vulture/issues/10/
-    yield 'qutebrowser.misc.utilcmds.pyeval_output'
-    yield 'utils.use_color'
-    yield 'qutebrowser.browser.mhtml.last_used_directory'
-    yield 'qutebrowser.utils.utils.fake_clipboard'
-    yield 'qutebrowser.utils.utils.log_clipboard'
+    ## qute:... handlers
+    for name in qutescheme._HANDLERS:  # pylint: disable=protected-access
+        yield 'qutebrowser.browser.qutescheme.qute_' + name
 
     # Other false-positives
     yield ('qutebrowser.completion.models.sortfilter.CompletionFilterModel().'
            'lessThan')
     yield 'qutebrowser.utils.jinja.Loader.get_source'
-    yield 'qutebrowser.utils.log.VDEBUG'
     yield 'qutebrowser.utils.log.QtWarningFilter.filter'
-    yield 'logging.LogRecord.log_color'
     yield 'qutebrowser.browser.pdfjs.is_available'
+    yield 'QEvent.posted'
+    yield 'log_stack'  # from message.py
     # vulture doesn't notice the hasattr() and thus thinks netrc_used is unused
     # in NetworkManager.on_authentication_required
     yield 'PyQt5.QtNetwork.QNetworkReply.netrc_used'
 
-    for attr in ('fileno', 'truncate', 'closed', 'readable'):
+    for attr in ['fileno', 'truncate', 'closed', 'readable']:
         yield 'qutebrowser.utils.qtutils.PyQIODevice.' + attr
 
-    for attr in ('priority', 'visit_call'):
+    for attr in ['priority', 'visit_call']:
         yield 'scripts.dev.pylint_checkers.config.' + attr
 
     yield 'scripts.dev.pylint_checkers.modeline.process_module'
 
-    for attr in ('_get_default_metavar_for_optional',
-                 '_get_default_metavar_for_positional',
-                 '_metavar_formatter'):
+    for attr in ['_get_default_metavar_for_optional',
+                 '_get_default_metavar_for_positional', '_metavar_formatter']:
         yield 'scripts.dev.src2asciidoc.UsageFormatter.' + attr
 
 
@@ -127,9 +121,9 @@ def report(items):
     properties which get used for the items.
     """
     output = []
-    for item in sorted(items, key=lambda e: (e.file.lower(), e.lineno)):
-        relpath = os.path.relpath(item.file)
-        path = relpath if not relpath.startswith('..') else item.file
+    for item in sorted(items, key=lambda e: (e.filename.lower(), e.lineno)):
+        relpath = os.path.relpath(item.filename)
+        path = relpath if not relpath.startswith('..') else item.filename
         output.append("{}:{}: Unused {} '{}'".format(path, item.lineno,
                                                      item.typ, item))
     return output
@@ -169,8 +163,7 @@ def run(files):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('files', nargs='*',
-                        default=['qutebrowser', 'scripts'])
+    parser.add_argument('files', nargs='*', default=['qutebrowser', 'scripts'])
     args = parser.parse_args()
     out = run(args.files)
     for line in out:

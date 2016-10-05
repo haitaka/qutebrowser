@@ -25,7 +25,6 @@ Module attributes:
 
 from PyQt5.QtCore import pyqtSlot, Qt
 
-from qutebrowser.utils import message
 from qutebrowser.config import config
 from qutebrowser.keyinput import keyparser
 from qutebrowser.utils import usertypes, log, objreg, utils
@@ -49,6 +48,9 @@ class NormalKeyParser(keyparser.CommandKeyParser):
         self.read_config('normal')
         self._partial_timer = usertypes.Timer(self, 'partial-match')
         self._partial_timer.setSingleShot(True)
+        self._inhibited = False
+        self._inhibited_timer = usertypes.Timer(self, 'normal-inhibited')
+        self._inhibited_timer.setSingleShot(True)
 
     def __repr__(self):
         return utils.get_repr(self)
@@ -63,9 +65,10 @@ class NormalKeyParser(keyparser.CommandKeyParser):
             A self.Match member.
         """
         txt = e.text().strip()
-        if not self._keystring and any(txt == c for c in STARTCHARS):
-            message.set_cmd_text(self._win_id, txt)
-            return self.Match.definitive
+        if self._inhibited:
+            self._debug_log("Ignoring key '{}', because the normal mode is "
+                "currently inhibited.".format(txt))
+            return self.Match.none
         match = super()._handle_single_key(e)
         if match == self.Match.partial:
             timeout = config.get('input', 'partial-timeout')
@@ -74,6 +77,15 @@ class NormalKeyParser(keyparser.CommandKeyParser):
                 self._partial_timer.timeout.connect(self._clear_partial_match)
                 self._partial_timer.start()
         return match
+
+    def set_inhibited_timeout(self, timeout):
+        if timeout != 0:
+            self._debug_log("Inhibiting the normal mode for {}ms.".format(
+                timeout))
+            self._inhibited = True
+            self._inhibited_timer.setInterval(timeout)
+            self._inhibited_timer.timeout.connect(self._clear_inhibited)
+            self._inhibited_timer.start()
 
     @pyqtSlot()
     def _clear_partial_match(self):
@@ -84,11 +96,23 @@ class NormalKeyParser(keyparser.CommandKeyParser):
         self.keystring_updated.emit(self._keystring)
 
     @pyqtSlot()
+    def _clear_inhibited(self):
+        """Reset inhibition state after a timeout."""
+        self._debug_log("Releasing inhibition state of normal mode.")
+        self._inhibited = False
+
+    @pyqtSlot()
     def _stop_timers(self):
         super()._stop_timers()
         self._partial_timer.stop()
         try:
             self._partial_timer.timeout.disconnect(self._clear_partial_match)
+        except TypeError:
+            # no connections
+            pass
+        self._inhibited_timer.stop()
+        try:
+            self._inhibited_timer.timeout.disconnect(self._clear_inhibited)
         except TypeError:
             # no connections
             pass
@@ -153,10 +177,15 @@ class HintKeyParser(keyparser.CommandKeyParser):
             elif self._last_press == LastPress.keystring and self._keystring:
                 self._keystring = self._keystring[:-1]
                 self.keystring_updated.emit(self._keystring)
+                if not self._keystring and self._filtertext:
+                    # Switch back to hint filtering mode (this can happen only
+                    # in numeric mode after the number has been deleted).
+                    hintmanager.filter_hints(self._filtertext)
+                    self._last_press = LastPress.filtertext
                 return True
             else:
                 return super()._handle_special_key(e)
-        elif config.get('hints', 'mode') != 'number':
+        elif hintmanager.current_mode() != 'number':
             return super()._handle_special_key(e)
         elif not e.text():
             return super()._handle_special_key(e)
@@ -198,19 +227,22 @@ class HintKeyParser(keyparser.CommandKeyParser):
         if keytype == self.Type.chain:
             hintmanager = objreg.get('hintmanager', scope='tab',
                                      window=self._win_id, tab='current')
-            hintmanager.fire(cmdstr)
+            hintmanager.handle_partial_key(cmdstr)
         else:
             # execute as command
             super().execute(cmdstr, keytype, count)
 
-    def update_bindings(self, strings):
+    def update_bindings(self, strings, preserve_filter=False):
         """Update bindings when the hint strings changed.
 
         Args:
             strings: A list of hint strings.
+            preserve_filter: Whether to keep the current value of
+                             `self._filtertext`.
         """
         self.bindings = {s: s for s in strings}
-        self._filtertext = ''
+        if not preserve_filter:
+            self._filtertext = ''
 
     @pyqtSlot(str)
     def on_keystring_updated(self, keystr):
@@ -230,3 +262,55 @@ class CaretKeyParser(keyparser.CommandKeyParser):
         super().__init__(win_id, parent, supports_count=True,
                          supports_chains=True)
         self.read_config('caret')
+
+
+class MarkKeyParser(keyparser.BaseKeyParser):
+
+    """KeyParser for set_mark and jump_mark mode.
+
+    Attributes:
+        _mode: Either KeyMode.set_mark or KeyMode.jump_mark.
+    """
+
+    def __init__(self, win_id, mode, parent=None):
+        super().__init__(win_id, parent, supports_count=False,
+                         supports_chains=False)
+        self._mode = mode
+
+    def handle(self, e):
+        """Override handle to always match the next key and create a mark.
+
+        Args:
+            e: the KeyPressEvent from Qt.
+
+        Return:
+            True if event has been handled, False otherwise.
+        """
+        if utils.keyevent_to_string(e) is None:
+            # this is a modifier key, let it pass and keep going
+            return False
+
+        key = e.text()
+
+        tabbed_browser = objreg.get('tabbed-browser', scope='window',
+                                    window=self._win_id)
+
+        if self._mode == usertypes.KeyMode.set_mark:
+            tabbed_browser.set_mark(key)
+        elif self._mode == usertypes.KeyMode.jump_mark:
+            tabbed_browser.jump_mark(key)
+        else:
+            raise ValueError("{} is not a valid mark mode".format(self._mode))
+
+        self.request_leave.emit(self._mode, "valid mark key")
+
+        return True
+
+    @pyqtSlot(str)
+    def on_keyconfig_changed(self, mode):
+        """MarkKeyParser has no config section (no bindable keys)."""
+        pass
+
+    def execute(self, cmdstr, _keytype, count=None):
+        """Should never be called on MarkKeyParser."""
+        assert False

@@ -27,7 +27,7 @@ from PyQt5.QtCore import pyqtSignal, QObject
 
 from qutebrowser.config import configdata, textwrapper
 from qutebrowser.commands import cmdutils, cmdexc
-from qutebrowser.utils import log, utils, qtutils
+from qutebrowser.utils import log, utils, qtutils, message, usertypes
 
 
 class KeyConfigError(Exception):
@@ -150,25 +150,40 @@ class KeyConfigParser(QObject):
             data = str(self)
             f.write(data)
 
-    @cmdutils.register(instance='key-config', maxsplit=1, no_cmd_split=True)
-    def bind(self, key, command, *, mode=None, force=False):
+    @cmdutils.register(instance='key-config', maxsplit=1, no_cmd_split=True,
+                       no_replace_variables=True)
+    @cmdutils.argument('command', completion=usertypes.Completion.bind)
+    def bind(self, key, command=None, *, mode='normal', force=False):
         """Bind a key to a command.
 
         Args:
             key: The keychain or special key (inside `<...>`) to bind.
-            command: The command to execute, with optional args.
+            command: The command to execute, with optional args, or None to
+                     print the current binding.
             mode: A comma-separated list of modes to bind the key in
                   (default: `normal`).
             force: Rebind the key if it is already bound.
         """
-        if mode is None:
-            mode = 'normal'
-        mode = self._normalize_sectname(mode)
-        for m in mode.split(','):
+        if utils.is_special_key(key):
+            # <Ctrl-t>, <ctrl-T>, and <ctrl-t> should be considered equivalent
+            key = key.lower()
+
+        if command is None:
+            cmd = self.get_bindings_for(mode).get(key, None)
+            if cmd is None:
+                message.info("{} is unbound in {} mode".format(key, mode))
+            else:
+                message.info("{} is bound to '{}' in {} mode".format(key, cmd,
+                                                                     mode))
+            return
+
+        modenames = self._normalize_sectname(mode).split(',')
+        for m in modenames:
             if m not in configdata.KEY_DATA:
                 raise cmdexc.CommandError("Invalid mode {}!".format(m))
         try:
-            self._validate_command(command)
+            modes = [usertypes.KeyMode[m] for m in modenames]
+            self._validate_command(command, modes)
         except KeyConfigError as e:
             raise cmdexc.CommandError(str(e))
         try:
@@ -178,12 +193,12 @@ class KeyConfigParser(QObject):
                                       "override!".format(str(e.keychain)))
         except KeyConfigError as e:
             raise cmdexc.CommandError(e)
-        for m in mode.split(','):
+        for m in modenames:
             self.changed.emit(m)
             self._mark_config_dirty()
 
     @cmdutils.register(instance='key-config')
-    def unbind(self, key, mode=None):
+    def unbind(self, key, mode='normal'):
         """Unbind a keychain.
 
         Args:
@@ -191,8 +206,10 @@ class KeyConfigParser(QObject):
             mode: A comma-separated list of modes to unbind the key in
                   (default: `normal`).
         """
-        if mode is None:
-            mode = 'normal'
+        if utils.is_special_key(key):
+            # <Ctrl-t>, <ctrl-T>, and <ctrl-t> should be considered equivalent
+            key = key.lower()
+
         mode = self._normalize_sectname(mode)
         for m in mode.split(','):
             if m not in configdata.KEY_DATA:
@@ -315,8 +332,14 @@ class KeyConfigParser(QObject):
         self.is_dirty = True
         self.config_dirty.emit()
 
-    def _validate_command(self, line):
-        """Check if a given command is valid."""
+    def _validate_command(self, line, modes=None):
+        """Check if a given command is valid.
+
+        Args:
+            line: The commandline to validate.
+            modes: A list of modes to validate the commands for, or None.
+        """
+        from qutebrowser.config import config
         if line == self.UNBOUND_COMMAND:
             return
         commands = line.split(';;')
@@ -334,8 +357,16 @@ class KeyConfigParser(QObject):
                     line))
         commands = [c.split(maxsplit=1)[0].strip() for c in commands]
         for cmd in commands:
-            if cmd not in cmdutils.cmd_dict:
+            aliases = config.section('aliases')
+            if cmd in cmdutils.cmd_dict:
+                cmdname = cmd
+            elif cmd in aliases:
+                cmdname = aliases[cmd].split(maxsplit=1)[0].strip()
+            else:
                 raise KeyConfigError("Invalid command '{}'!".format(cmd))
+            cmd_obj = cmdutils.cmd_dict[cmdname]
+            for m in modes or []:
+                cmd_obj.validate_mode(m)
 
     def _read_command(self, line):
         """Read a command from a line."""
@@ -343,12 +374,12 @@ class KeyConfigParser(QObject):
             raise KeyConfigError("Got command '{}' without getting a "
                                  "section!".format(line))
         else:
-            self._validate_command(line)
             for rgx, repl in configdata.CHANGED_KEY_COMMANDS:
                 if rgx.match(line):
                     line = rgx.sub(repl, line)
                     self._mark_config_dirty()
                     break
+            self._validate_command(line)
             self._cur_command = line
 
     def _read_keybinding(self, line):
@@ -362,6 +393,9 @@ class KeyConfigParser(QObject):
 
     def _add_binding(self, sectname, keychain, command, *, force=False):
         """Add a new binding from keychain to command in section sectname."""
+        if utils.is_special_key(keychain):
+            # <Ctrl-t>, <ctrl-T>, and <ctrl-t> should be considered equivalent
+            keychain = keychain.lower()
         log.keyboard.vdebug("Adding binding {} -> {} in mode {}.".format(
             keychain, command, sectname))
         if sectname not in self.keybindings:
@@ -398,3 +432,15 @@ class KeyConfigParser(QObject):
         bindings = {k: v for k, v in bindings.items()
                     if v != self.UNBOUND_COMMAND}
         return bindings
+
+    def get_reverse_bindings_for(self, section):
+        """Get a dict of commands to a list of bindings for the section."""
+        cmd_to_keys = {}
+        for key, cmd in self.get_bindings_for(section).items():
+            cmd_to_keys.setdefault(cmd, [])
+            # put special bindings last
+            if utils.is_special_key(key):
+                cmd_to_keys[cmd].append(key)
+            else:
+                cmd_to_keys[cmd].insert(0, key)
+        return cmd_to_keys

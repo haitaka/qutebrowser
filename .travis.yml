@@ -1,7 +1,6 @@
 sudo: required
 dist: trusty
-# Not really, but this is here so we can do stuff by hand.
-language: c
+language: generic
 
 matrix:
   include:
@@ -14,10 +13,17 @@ matrix:
       env: DOCKER=archlinux
       services: docker
     - os: linux
-      env: DOCKER=ubuntu-wily
+      env: DOCKER=archlinux QUTE_BDD_WEBENGINE=true
+      services: docker
+    - os: linux
+      env: DOCKER=ubuntu-xenial
       services: docker
     - os: osx
-      env: TESTENV=py35
+      env: TESTENV=py35 OSX=elcapitan
+      osx_image: xcode7.3
+    - os: osx
+      env: TESTENV=py35 OSX=yosemite
+      osx_image: xcode6.4
     - os: linux
       env: TESTENV=pylint
     - os: linux
@@ -34,9 +40,6 @@ matrix:
       env: TESTENV=check-manifest
     - os: linux
       env: TESTENV=eslint
-  allow_failures:
-    - os: osx
-      env: TESTENV=py35
 
 cache:
   directories:
@@ -48,7 +51,7 @@ before_install:
   - 'export PATH="/usr/bin:$PATH"'
 
 install:
-  - python scripts/dev/ci/install.py
+  - bash scripts/dev/ci/travis_install.sh
 
 script:
   - bash scripts/dev/ci/travis_run.sh
@@ -61,8 +64,8 @@ notifications:
     - https://buildtimetrend.herokuapp.com/travis
   irc:
     channels:
-      - "chat.freenode.net#qutebrowser"
-    on_success: change
+      - "chat.freenode.net#qutebrowser-dev"
+    on_success: always
     on_failure: always
     skip_join: true
     template:

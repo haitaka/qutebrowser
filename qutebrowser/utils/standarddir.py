@@ -145,7 +145,6 @@ def _from_args(typ, args):
             override: boolean, if the user did override the path
             path: The overridden path, or None to turn off storage.
     """
-    # pylint: disable=too-many-return-statements
     typ_to_argparse_arg = {
         QStandardPaths.ConfigLocation: 'confdir',
         QStandardPaths.DataLocation: 'datadir',
@@ -169,7 +168,7 @@ def _from_args(typ, args):
             suffix = basedir_suffix[typ]
         except KeyError:  # pragma: no cover
             return (False, None)
-        return (True, os.path.join(basedir, suffix))
+        return (True, os.path.abspath(os.path.join(basedir, suffix)))
 
     try:
         argname = typ_to_argparse_arg[typ]
@@ -226,7 +225,7 @@ def _init_cachedir_tag():
                 f.write("# This file is a cache directory tag created by "
                         "qutebrowser.\n")
                 f.write("# For information about cache directory tags, see:\n")
-                f.write("#  http://www.brynosaurus.com/"  # pragma: no branch
+                f.write("#  http://www.brynosaurus.com/"
                         "cachedir/\n")
         except OSError:
             log.init.exception("Failed to create CACHEDIR.TAG")

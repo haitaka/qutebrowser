@@ -20,39 +20,65 @@
 """Module containing command managers (SearchRunner and CommandRunner)."""
 
 import collections
+import traceback
+import re
 
 from PyQt5.QtCore import pyqtSlot, QUrl, QObject
 
 from qutebrowser.config import config, configexc
 from qutebrowser.commands import cmdexc, cmdutils
-from qutebrowser.utils import message, log, objreg, qtutils
+from qutebrowser.utils import message, objreg, qtutils, utils
 from qutebrowser.misc import split
 
 
 ParseResult = collections.namedtuple('ParseResult', ['cmd', 'args', 'cmdline',
                                                      'count'])
+last_command = {}
+
+
+def _current_url(tabbed_browser):
+    """Convenience method to get the current url."""
+    try:
+        return tabbed_browser.current_url()
+    except qtutils.QtValueError as e:
+        msg = "Current URL is invalid"
+        if e.reason:
+            msg += " ({})".format(e.reason)
+        msg += "!"
+        raise cmdexc.CommandError(msg)
 
 
 def replace_variables(win_id, arglist):
     """Utility function to replace variables like {url} in a list of args."""
+    variables = {
+        'url': lambda: _current_url(tabbed_browser).toString(
+            QUrl.FullyEncoded | QUrl.RemovePassword),
+        'url:pretty': lambda: _current_url(tabbed_browser).toString(
+            QUrl.DecodeReserved | QUrl.RemovePassword),
+        'clipboard': utils.get_clipboard,
+        'primary': lambda: utils.get_clipboard(selection=True),
+    }
+    values = {}
     args = []
     tabbed_browser = objreg.get('tabbed-browser', scope='window',
                                 window=win_id)
-    if '{url}' in arglist:
-        try:
-            url = tabbed_browser.current_url().toString(QUrl.FullyEncoded |
-                                                        QUrl.RemovePassword)
-        except qtutils.QtValueError as e:
-            msg = "Current URL is invalid"
-            if e.reason:
-                msg += " ({})".format(e.reason)
-            msg += "!"
-            raise cmdexc.CommandError(msg)
-    for arg in arglist:
-        if arg == '{url}':
-            args.append(url)
-        else:
-            args.append(arg)
+
+    def repl_cb(matchobj):
+        """Return replacement for given match."""
+        var = matchobj.group("var")
+        if var not in values:
+            values[var] = variables[var]()
+        return values[var]
+    repl_pattern = re.compile("{(?P<var>" + "|".join(variables.keys()) + ")}")
+
+    try:
+        for arg in arglist:
+            # using re.sub with callback function replaces all variables in a
+            # single pass and avoids expansion of nested variables (e.g.
+            # "{url}" from clipboard is not expanded)
+            args.append(repl_pattern.sub(repl_cb, arg))
+    except utils.ClipboardError as e:
+        raise cmdexc.CommandError(e)
     return args
 
 
@@ -62,27 +88,30 @@ class CommandRunner(QObject):
 
     Attributes:
         _win_id: The window this CommandRunner is associated with.
+        _partial_match: Whether to allow partial command matches.
     """
 
-    def __init__(self, win_id, parent=None):
+    def __init__(self, win_id, partial_match=False, parent=None):
         super().__init__(parent)
+        self._partial_match = partial_match
         self._win_id = win_id
 
-    def _get_alias(self, text):
+    def _get_alias(self, text, default=None):
         """Get an alias from the config.
 
         Args:
             text: The text to parse.
+            default : Default value to return when alias was not found.
 
         Return:
-            None if no alias was found.
-            The new command string if an alias was found.
+            The new command string if an alias was found. Default value
+            otherwise.
         """
         parts = text.strip().split(maxsplit=1)
         try:
             alias = config.get('aliases', parts[0])
         except (configexc.NoOptionError, configexc.NoSectionError):
-            return None
+            return default
         try:
             new_cmd = '{} {}'.format(alias, parts[1])
         except IndexError:
@@ -91,7 +120,7 @@ class CommandRunner(QObject):
             new_cmd += ' '
         return new_cmd
 
-    def parse_all(self, text, *args, **kwargs):
+    def parse_all(self, text, aliases=True, *args, **kwargs):
         """Split a command on ;; and parse all parts.
 
         If the first command in the commandline is a non-split one, it only
@@ -99,11 +128,18 @@ class CommandRunner(QObject):
 
         Args:
             text: Text to parse.
+            aliases: Whether to handle aliases.
             *args/**kwargs: Passed to parse().
 
         Yields:
             ParseResult tuples.
         """
+        if not text.strip():
+            raise cmdexc.NoSuchCommandError("No command given")
+
+        if aliases:
+            text = self._get_alias(text, text)
+
         if ';;' in text:
             # Get the first command and check if it doesn't want to have ;;
             # split.
@@ -138,12 +174,11 @@ class CommandRunner(QObject):
             count = None
         return (count, cmdstr)
 
-    def parse(self, text, *, aliases=True, fallback=False, keep=False):
+    def parse(self, text, *, fallback=False, keep=False):
         """Split the commandline text into command and arguments.
 
         Args:
             text: Text to parse.
-            aliases: Whether to handle aliases.
             fallback: Whether to do a fallback splitting when the command was
                       unknown.
             keep: Whether to keep special chars and whitespace
@@ -156,35 +191,46 @@ class CommandRunner(QObject):
 
         if not cmdstr and not fallback:
             raise cmdexc.NoSuchCommandError("No command given")
-        if aliases:
-            new_cmd = self._get_alias(text)
-            if new_cmd is not None:
-                log.commands.debug("Re-parsing with '{}'.".format(new_cmd))
-                return self.parse(new_cmd, aliases=False, fallback=fallback,
-                                  keep=keep)
+
+        if self._partial_match:
+            cmdstr = self._completion_match(cmdstr)
+
         try:
             cmd = cmdutils.cmd_dict[cmdstr]
         except KeyError:
-            if fallback:
-                cmd = None
-                args = None
-                if keep:
-                    cmdstr, sep, argstr = text.partition(' ')
-                    cmdline = [cmdstr, sep] + argstr.split()
-                else:
-                    cmdline = text.split()
-            else:
-                raise cmdexc.NoSuchCommandError('{}: no such command'.format(
-                    cmdstr))
+            if not fallback:
+                raise cmdexc.NoSuchCommandError(
+                    '{}: no such command'.format(cmdstr))
+            cmdline = split.split(text, keep=keep)
+            return ParseResult(cmd=None, args=None, cmdline=cmdline,
+                               count=count)
+
+        args = self._split_args(cmd, argstr, keep)
+        if keep and args:
+            cmdline = [cmdstr, sep + args[0]] + args[1:]
+        elif keep:
+            cmdline = [cmdstr, sep]
         else:
-            args = self._split_args(cmd, argstr, keep)
-            if keep and args:
-                cmdline = [cmdstr, sep + args[0]] + args[1:]
-            elif keep:
-                cmdline = [cmdstr, sep]
-            else:
-                cmdline = [cmdstr] + args[:]
+            cmdline = [cmdstr] + args[:]
+
         return ParseResult(cmd=cmd, args=args, cmdline=cmdline, count=count)
+
+    def _completion_match(self, cmdstr):
+        """Replace cmdstr with a matching completion if there's only one match.
+
+        Args:
+            cmdstr: The string representing the entered command so far
+
+        Return:
+            cmdstr modified to the matching completion or unmodified
+        """
+        matches = []
+        for valid_command in cmdutils.cmd_dict:
+            if valid_command.find(cmdstr) == 0:
+                matches.append(valid_command)
+        if len(matches) == 1:
+            cmdstr = matches[0]
+        return cmdstr
 
     def _split_args(self, cmd, argstr, keep):
         """Split the arguments from an arg string.
@@ -237,7 +283,14 @@ class CommandRunner(QObject):
             count: The count to pass to the command.
         """
         for result in self.parse_all(text):
-            args = replace_variables(self._win_id, result.args)
+            mode_manager = objreg.get('mode-manager', scope='window',
+                                      window=self._win_id)
+            cur_mode = mode_manager.mode
+
+            if result.cmd.no_replace_variables:
+                args = result.args
+            else:
+                args = replace_variables(self._win_id, result.args)
             if count is not None:
                 if result.count is not None:
                     raise cmdexc.CommandMetaError("Got count via command and "
@@ -248,13 +301,19 @@ class CommandRunner(QObject):
             else:
                 result.cmd.run(self._win_id, args)
 
+            if result.cmdline[0] != 'repeat-command':
+                last_command[cur_mode] = (
+                    self._parse_count(text)[1],
+                    count if count is not None else result.count)
+
     @pyqtSlot(str, int)
+    @pyqtSlot(str)
     def run_safely(self, text, count=None):
         """Run a command and display exceptions in the statusbar."""
         try:
             self.run(text, count)
         except (cmdexc.CommandMetaError, cmdexc.CommandError) as e:
-            message.error(self._win_id, e, immediately=True)
+            message.error(str(e), stack=traceback.format_exc())
 
     @pyqtSlot(str, int)
     def run_safely_init(self, text, count=None):
@@ -266,4 +325,4 @@ class CommandRunner(QObject):
         try:
             self.run(text, count)
         except (cmdexc.CommandMetaError, cmdexc.CommandError) as e:
-            message.error(self._win_id, e)
+            message.error(str(e), stack=traceback.format_exc())

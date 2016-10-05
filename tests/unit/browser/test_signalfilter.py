@@ -53,10 +53,10 @@ class FakeTabbedBrowser:
 class Signaller(QObject):
 
     signal = pyqtSignal(str)
-    statusbar_message = pyqtSignal(str)
+    link_hovered = pyqtSignal(str)
 
     filtered_signal = pyqtSignal(str)
-    cur_statusbar_message = pyqtSignal(str)
+    cur_link_hovered = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -78,12 +78,12 @@ def objects():
     signaller = Signaller()
     signaller.signal.connect(
         signal_filter.create(signaller.filtered_signal, tab))
-    signaller.statusbar_message.connect(
-        signal_filter.create(signaller.cur_statusbar_message, tab))
+    signaller.link_hovered.connect(
+        signal_filter.create(signaller.cur_link_hovered, tab))
     return Objects(signal_filter=signal_filter, signaller=signaller)
 
 
-@pytest.yield_fixture
+@pytest.fixture
 def tabbed_browser(win_registry):
     tb = FakeTabbedBrowser()
     objreg.register('tabbed-browser', tb, scope='window', window=0)
@@ -121,7 +121,7 @@ def test_no_logging(caplog, objects, tabbed_browser, index_of):
     tabbed_browser.index_of = index_of
 
     with caplog.at_level(logging.DEBUG, logger='signals'):
-        objects.signaller.statusbar_message.emit('foo')
+        objects.signaller.link_hovered.emit('foo')
 
     assert not caplog.records
 

@@ -31,9 +31,8 @@ try:
 except ImportError:  # pragma: no cover
     from yaml import SafeLoader as YamlLoader, SafeDumper as YamlDumper
 
-from qutebrowser.browser import tabhistory
 from qutebrowser.utils import (standarddir, objreg, qtutils, log, usertypes,
-                               message)
+                               message, utils)
 from qutebrowser.commands import cmdexc, cmdutils
 from qutebrowser.mainwindow import mainwindow
 from qutebrowser.config import config
@@ -70,6 +69,35 @@ class SessionError(Exception):
 class SessionNotFoundError(SessionError):
 
     """Exception raised when a session to be loaded was not found."""
+
+
+class TabHistoryItem:
+
+    """A single item in the tab history.
+
+    Attributes:
+        url: The QUrl of this item.
+        original_url: The QUrl of this item which was originally requested.
+        title: The title as string of this item.
+        active: Whether this item is the item currently navigated to.
+        user_data: The user data for this item.
+    """
+
+    def __init__(self, url, title, *, original_url=None, active=False,
+                 user_data=None):
+        self.url = url
+        if original_url is None:
+            self.original_url = url
+        else:
+            self.original_url = original_url
+        self.title = title
+        self.active = active
+        self.user_data = user_data
+
+    def __repr__(self):
+        return utils.get_repr(self, constructor=True, url=self.url,
+                              original_url=self.original_url, title=self.title,
+                              active=self.active, user_data=self.user_data)
 
 
 class SessionManager(QObject):
@@ -130,6 +158,55 @@ class SessionManager(QObject):
         else:
             return True
 
+    def _save_tab_item(self, tab, idx, item):
+        """Save a single history item in a tab.
+
+        Args:
+            tab: The tab to save.
+            idx: The index of the current history item.
+            item: The history item.
+
+        Return:
+            A dict with the saved data for this item.
+        """
+        data = {
+            'url': bytes(item.url().toEncoded()).decode('ascii'),
+        }
+
+        if item.title():
+            data['title'] = item.title()
+        else:
+            # https://github.com/The-Compiler/qutebrowser/issues/879
+            if tab.history.current_idx() == idx:
+                data['title'] = tab.title()
+            else:
+                data['title'] = data['url']
+
+        if item.originalUrl() != item.url():
+            encoded = item.originalUrl().toEncoded()
+            data['original-url'] = bytes(encoded).decode('ascii')
+
+        if tab.history.current_idx() == idx:
+            data['active'] = True
+
+        try:
+            user_data = item.userData()
+        except AttributeError:
+            # QtWebEngine
+            user_data = None
+
+        if tab.history.current_idx() == idx:
+            pos = tab.scroller.pos_px()
+            data['zoom'] = tab.zoom.factor()
+            data['scroll-pos'] = {'x': pos.x(), 'y': pos.y()}
+        elif user_data is not None:
+            if 'zoom' in user_data:
+                data['zoom'] = user_data['zoom']
+            if 'scroll-pos' in user_data:
+                pos = user_data['scroll-pos']
+                data['scroll-pos'] = {'x': pos.x(), 'y': pos.y()}
+        return data
+
     def _save_tab(self, tab, active):
         """Get a dict with data for a single tab.
 
@@ -140,42 +217,9 @@ class SessionManager(QObject):
         data = {'history': []}
         if active:
             data['active'] = True
-        history = tab.page().history()
-        for idx, item in enumerate(history.items()):
+        for idx, item in enumerate(tab.history):
             qtutils.ensure_valid(item)
-
-            item_data = {
-                'url': bytes(item.url().toEncoded()).decode('ascii'),
-            }
-
-            if item.title():
-                item_data['title'] = item.title()
-            else:
-                # https://github.com/The-Compiler/qutebrowser/issues/879
-                if history.currentItemIndex() == idx:
-                    item_data['title'] = tab.page().mainFrame().title()
-                else:
-                    item_data['title'] = item_data['url']
-
-            if item.originalUrl() != item.url():
-                encoded = item.originalUrl().toEncoded()
-                item_data['original-url'] = bytes(encoded).decode('ascii')
-
-            if history.currentItemIndex() == idx:
-                item_data['active'] = True
-
-            user_data = item.userData()
-            if history.currentItemIndex() == idx:
-                pos = tab.page().mainFrame().scrollPosition()
-                item_data['zoom'] = tab.zoomFactor()
-                item_data['scroll-pos'] = {'x': pos.x(), 'y': pos.y()}
-            elif user_data is not None:
-                if 'zoom' in user_data:
-                    item_data['zoom'] = user_data['zoom']
-                if 'scroll-pos' in user_data:
-                    pos = user_data['scroll-pos']
-                    item_data['scroll-pos'] = {'x': pos.x(), 'y': pos.y()}
-
+            item_data = self._save_tab_item(tab, idx, item)
             data['history'].append(item_data)
         return data
 
@@ -295,14 +339,14 @@ class SessionManager(QObject):
                     histentry['original-url'].encode('ascii'))
             else:
                 orig_url = url
-            entry = tabhistory.TabHistoryItem(
-                url=url, original_url=orig_url, title=histentry['title'],
-                active=active, user_data=user_data)
+            entry = TabHistoryItem(url=url, original_url=orig_url,
+                                   title=histentry['title'], active=active,
+                                   user_data=user_data)
             entries.append(entry)
             if active:
-                new_tab.titleChanged.emit(histentry['title'])
+                new_tab.title_changed.emit(histentry['title'])
         try:
-            new_tab.page().load_history(entries)
+            new_tab.history.load_items(entries)
         except ValueError as e:
             raise SessionError(e)
 
@@ -356,8 +400,8 @@ class SessionManager(QObject):
                 sessions.append(base)
         return sessions
 
-    @cmdutils.register(completion=[usertypes.Completion.sessions],
-                       instance='session-manager')
+    @cmdutils.register(instance='session-manager')
+    @cmdutils.argument('name', completion=usertypes.Completion.sessions)
     def session_load(self, name, clear=False, temp=False, force=False):
         """Load a session.
 
@@ -384,15 +428,13 @@ class SessionManager(QObject):
                 for win in old_windows:
                     win.close()
 
-    @cmdutils.register(name=['session-save', 'w'], win_id='win_id',
-                       completion=[usertypes.Completion.sessions],
-                       instance='session-manager')
-    def session_save(self, win_id, name: {'type': str}=default, current=False,
-                     quiet=False, force=False):
+    @cmdutils.register(name=['session-save', 'w'], instance='session-manager')
+    @cmdutils.argument('name', completion=usertypes.Completion.sessions)
+    def session_save(self, name: str=default, current=False, quiet=False,
+                     force=False):
         """Save a session.
 
         Args:
-            win_id: The current window ID.
             name: The name of the session. If not given, the session configured
                   in general -> session-default-name is saved.
             current: Save the current session instead of the default.
@@ -416,11 +458,10 @@ class SessionManager(QObject):
                                       .format(e))
         else:
             if not quiet:
-                message.info(win_id, "Saved session {}.".format(name),
-                             immediately=True)
+                message.info("Saved session {}.".format(name))
 
-    @cmdutils.register(completion=[usertypes.Completion.sessions],
-                       instance='session-manager')
+    @cmdutils.register(instance='session-manager')
+    @cmdutils.argument('name', completion=usertypes.Completion.sessions)
     def session_delete(self, name, force=False):
         """Delete a session.
 

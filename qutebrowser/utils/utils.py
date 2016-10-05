@@ -28,6 +28,7 @@ import collections
 import functools
 import contextlib
 import itertools
+import socket
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QKeySequence, QColor, QClipboard
@@ -42,9 +43,19 @@ fake_clipboard = None
 log_clipboard = False
 
 
-class SelectionUnsupportedError(Exception):
+class ClipboardError(Exception):
+
+    """Raised if the clipboard contents are unavailable for some reason."""
+
+
+class SelectionUnsupportedError(ClipboardError):
 
     """Raised if [gs]et_clipboard is used and selection=True is unsupported."""
+
+
+class ClipboardEmptyError(ClipboardError):
+
+    """Raised if get_clipboard is used and the clipboard is empty."""
 
 
 def elide(text, length):
@@ -55,6 +66,38 @@ def elide(text, length):
         return text
     else:
         return text[:length - 1] + '\u2026'
+
+
+def elide_filename(filename, length):
+    """Elide a filename to the given length.
+
+    The difference to the elide() is that the text is removed from
+    the middle instead of from the end. This preserves file name extensions.
+    Additionally, standard ASCII dots are used ("...") instead of the unicode
+    "…" (U+2026) so it works regardless of the filesystem encoding.
+
+    This function does not handle path separators.
+
+    Args:
+        filename: The filename to elide.
+        length: The maximum length of the filename, must be at least 3.
+
+    Return:
+        The elided filename.
+    """
+    elidestr = '...'
+    if length < len(elidestr):
+        raise ValueError('length must be greater or equal to 3')
+    if len(filename) <= length:
+        return filename
+    # Account for '...'
+    length -= len(elidestr)
+    left = length // 2
+    right = length - left
+    if right == 0:
+        return filename[:left] + elidestr
+    else:
+        return filename[:left] + elidestr + filename[-right:]
 
 
 def compact_text(text, elidelength=None):
@@ -132,7 +175,7 @@ def actute_warning():
     try:
         with open('/usr/share/X11/locale/en_US.UTF-8/Compose', 'r',
                   encoding='utf-8') as f:
-            for line in f:  # pragma: no branch
+            for line in f:
                 if '<dead_actute>' in line:
                     if sys.stdout is not None:
                         sys.stdout.flush()
@@ -140,7 +183,7 @@ def actute_warning():
                           "that is not a bug in qutebrowser! See "
                           "https://bugs.freedesktop.org/show_bug.cgi?id=69476 "
                           "for details.")
-                    break  # pragma: no branch
+                    break
     except OSError:
         log.init.exception("Failed to read Compose file")
 
@@ -229,21 +272,6 @@ def format_seconds(total_seconds):
     chunks.append(min_format.format(minutes))
     chunks.append('{:02}'.format(seconds))
     return prefix + ':'.join(chunks)
-
-
-def format_timedelta(td):
-    """Format a timedelta to get a "1h 5m 1s" string."""
-    prefix = '-' if td.total_seconds() < 0 else ''
-    hours, rem = divmod(abs(round(td.total_seconds())), 3600)
-    minutes, seconds = divmod(rem, 60)
-    chunks = []
-    if hours:
-        chunks.append('{}h'.format(hours))
-    if minutes:
-        chunks.append('{}m'.format(minutes))
-    if seconds or not chunks:
-        chunks.append('{}s'.format(seconds))
-    return prefix + ' '.join(chunks)
 
 
 def format_size(size, base=1024, suffix=''):
@@ -387,9 +415,8 @@ def keyevent_to_string(e):
             (Qt.ShiftModifier, 'Shift'),
         ])
     modifiers = (Qt.Key_Control, Qt.Key_Alt, Qt.Key_Shift, Qt.Key_Meta,
-                 Qt.Key_AltGr, Qt.Key_Super_L, Qt.Key_Super_R,
-                 Qt.Key_Hyper_L, Qt.Key_Hyper_R, Qt.Key_Direction_L,
-                 Qt.Key_Direction_R)
+                 Qt.Key_AltGr, Qt.Key_Super_L, Qt.Key_Super_R, Qt.Key_Hyper_L,
+                 Qt.Key_Hyper_R, Qt.Key_Direction_L, Qt.Key_Direction_R)
     if e.key() in modifiers:
         # Only modifier pressed
         return None
@@ -441,9 +468,14 @@ class KeyParseError(Exception):
         super().__init__("Could not parse {!r}: {}".format(keystr, error))
 
 
+def is_special_key(keystr):
+    """True if keystr is a 'special' keystring (e.g. <ctrl-x> or <space>)."""
+    return keystr.startswith('<') and keystr.endswith('>')
+
+
 def _parse_single_key(keystr):
     """Convert a single key string to a (Qt.Key, Qt.Modifiers, text) tuple."""
-    if keystr.startswith('<') and keystr.endswith('>'):
+    if is_special_key(keystr):
         # Special key
         keystr = keystr[1:-1]
     elif len(keystr) == 1:
@@ -490,7 +522,7 @@ def _parse_single_key(keystr):
 
 def parse_keystring(keystr):
     """Parse a keystring like <Ctrl-x> or xyz and return a KeyInfo list."""
-    if keystr.startswith('<') and keystr.endswith('>'):
+    if is_special_key(keystr):
         return [_parse_single_key(keystr)]
     else:
         return [_parse_single_key(char) for char in keystr]
@@ -514,7 +546,7 @@ def normalize_keystr(keystr):
     )
     for (orig, repl) in replacements:
         keystr = keystr.replace(orig, repl)
-    for mod in ('ctrl', 'meta', 'alt', 'shift'):
+    for mod in ['ctrl', 'meta', 'alt', 'shift']:
         keystr = keystr.replace(mod + '-', mod + '+')
     return keystr
 
@@ -526,14 +558,6 @@ class FakeIOStream(io.TextIOBase):
     def __init__(self, write_func):
         super().__init__()
         self.write = write_func
-
-    def flush(self):
-        """Override flush() to satisfy pylint."""
-        return super().flush()
-
-    def isatty(self):
-        """Override isatty() to satisfy pylint."""
-        return super().isatty()
 
 
 @contextlib.contextmanager
@@ -758,22 +782,20 @@ def newest_slice(iterable, count):
 
 def set_clipboard(data, selection=False):
     """Set the clipboard to some given data."""
-    clipboard = QApplication.clipboard()
-    if selection and not clipboard.supportsSelection():
+    if selection and not supports_selection():
         raise SelectionUnsupportedError
     if log_clipboard:
         what = 'primary selection' if selection else 'clipboard'
         log.misc.debug("Setting fake {}: {}".format(what, json.dumps(data)))
     else:
         mode = QClipboard.Selection if selection else QClipboard.Clipboard
-        clipboard.setText(data, mode=mode)
+        QApplication.clipboard().setText(data, mode=mode)
 
 
 def get_clipboard(selection=False):
     """Get data from the clipboard."""
     global fake_clipboard
-    clipboard = QApplication.clipboard()
-    if selection and not clipboard.supportsSelection():
+    if selection and not supports_selection():
         raise SelectionUnsupportedError
 
     if fake_clipboard is not None:
@@ -781,6 +803,25 @@ def get_clipboard(selection=False):
         fake_clipboard = None
     else:
         mode = QClipboard.Selection if selection else QClipboard.Clipboard
-        data = clipboard.text(mode=mode)
+        data = QApplication.clipboard().text(mode=mode)
+
+    target = "Primary selection" if selection else "Clipboard"
+    if not data.strip():
+        raise ClipboardEmptyError("{} is empty.".format(target))
+    log.misc.debug("{} contained: {!r}".format(target, data))
 
     return data
+
+
+def supports_selection():
+    """Check if the OS supports primary selection."""
+    return QApplication.clipboard().supportsSelection()
+
+
+def random_port():
+    """Get a random free port."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(('localhost', 0))
+    port = sock.getsockname()[1]
+    sock.close()
+    return port

@@ -32,8 +32,9 @@ import collections
 
 from PyQt5.QtCore import pyqtSignal, QUrl, QObject
 
-from qutebrowser.utils import message, usertypes, urlutils, standarddir, objreg
-from qutebrowser.commands import cmdexc, cmdutils
+from qutebrowser.utils import (message, usertypes, qtutils, urlutils,
+                               standarddir, objreg)
+from qutebrowser.commands import cmdutils
 from qutebrowser.misc import lineparser
 
 
@@ -154,8 +155,7 @@ class QuickmarkManager(UrlMarkManager):
         try:
             key, url = line.rsplit(maxsplit=1)
         except ValueError:
-            message.error('current', "Invalid quickmark '{}'".format(
-                line))
+            message.error("Invalid quickmark '{}'".format(line))
         else:
             self.marks[key] = url
 
@@ -167,16 +167,20 @@ class QuickmarkManager(UrlMarkManager):
             url: The quickmark url as a QUrl.
         """
         if not url.isValid():
-            urlutils.invalid_url_error(win_id, url, "save quickmark")
+            urlutils.invalid_url_error(url, "save quickmark")
             return
         urlstr = url.toString(QUrl.RemovePassword | QUrl.FullyEncoded)
         message.ask_async(
             win_id, "Add quickmark:", usertypes.PromptMode.text,
             functools.partial(self.quickmark_add, win_id, urlstr))
 
-    @cmdutils.register(instance='quickmark-manager', win_id='win_id')
+    @cmdutils.register(instance='quickmark-manager')
+    @cmdutils.argument('win_id', win_id=True)
     def quickmark_add(self, win_id, url, name):
         """Add a new quickmark.
+
+        You can view all saved quickmarks on the
+        link:qute://bookmarks[bookmarks page].
 
         Args:
             win_id: The window ID to display the errors in.
@@ -186,10 +190,10 @@ class QuickmarkManager(UrlMarkManager):
         # We don't raise cmdexc.CommandError here as this can be called async
         # via prompt_save.
         if not name:
-            message.error(win_id, "Can't set mark with empty name!")
+            message.error("Can't set mark with empty name!")
             return
         if not url:
-            message.error(win_id, "Can't set mark with empty URL!")
+            message.error("Can't set mark with empty URL!")
             return
 
         def set_mark():
@@ -204,18 +208,22 @@ class QuickmarkManager(UrlMarkManager):
         else:
             set_mark()
 
-    @cmdutils.register(instance='quickmark-manager', maxsplit=0,
-                       completion=[usertypes.Completion.quickmark_by_name])
-    def quickmark_del(self, name):
-        """Delete a quickmark.
+    def get_by_qurl(self, url):
+        """Look up a quickmark by QUrl, returning its name.
 
-        Args:
-            name: The name of the quickmark to delete.
+        Takes O(n) time, where n is the number of quickmarks.
+        Use a name instead where possible.
         """
+        qtutils.ensure_valid(url)
+        urlstr = url.toString(QUrl.RemovePassword | QUrl.FullyEncoded)
+
         try:
-            self.delete(name)
-        except KeyError:
-            raise cmdexc.CommandError("Quickmark '{}' not found!".format(name))
+            index = list(self.marks.values()).index(urlstr)
+            key = list(self.marks.keys())[index]
+        except ValueError:
+            raise DoesNotExistError(
+                "Quickmark for '{}' not found!".format(urlstr))
+        return key
 
     def get(self, name):
         """Get the URL of the quickmark named name as a QUrl."""
@@ -264,12 +272,18 @@ class BookmarkManager(UrlMarkManager):
         elif len(parts) == 1:
             self.marks[parts[0]] = ''
 
-    def add(self, url, title):
+    def add(self, url, title, *, toggle=False):
         """Add a new bookmark.
 
         Args:
             url: The url to add as bookmark.
             title: The title for the new bookmark.
+            toggle: remove the bookmark instead of raising an error if it
+                    already exists.
+
+        Return:
+            True if the bookmark was added, and False if it was
+            removed (only possible if toggle is True).
         """
         if not url.isValid():
             errstr = urlutils.get_errstring(url)
@@ -278,21 +292,13 @@ class BookmarkManager(UrlMarkManager):
         urlstr = url.toString(QUrl.RemovePassword | QUrl.FullyEncoded)
 
         if urlstr in self.marks:
-            raise AlreadyExistsError("Bookmark already exists!")
+            if toggle:
+                del self.marks[urlstr]
+                return False
+            else:
+                raise AlreadyExistsError("Bookmark already exists!")
         else:
             self.marks[urlstr] = title
             self.changed.emit()
             self.added.emit(title, urlstr)
-
-    @cmdutils.register(instance='bookmark-manager', maxsplit=0,
-                       completion=[usertypes.Completion.bookmark_by_url])
-    def bookmark_del(self, url):
-        """Delete a bookmark.
-
-        Args:
-            url: The URL of the bookmark to delete.
-        """
-        try:
-            self.delete(url)
-        except KeyError:
-            raise cmdexc.CommandError("Bookmark '{}' not found!".format(url))
+            return True

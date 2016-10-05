@@ -34,7 +34,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir,
 
 from scripts import utils
 
-Message = collections.namedtuple('Message', 'typ, text')
+Message = collections.namedtuple('Message', 'typ, filename, text')
 MsgType = enum.Enum('MsgType', 'insufficent_coverage, perfect_file')
 
 
@@ -47,28 +47,37 @@ PERFECT_FILES = [
     ('tests/unit/commands/test_argparser.py',
         'qutebrowser/commands/argparser.py'),
 
-    ('tests/unit/browser/test_cache.py',
-        'qutebrowser/browser/cache.py'),
-    ('tests/unit/browser/test_cookies.py',
-        'qutebrowser/browser/cookies.py'),
-    ('tests/unit/browser/test_tabhistory.py',
-        'qutebrowser/browser/tabhistory.py'),
-    ('tests/unit/browser/http/test_http.py',
-        'qutebrowser/browser/http.py'),
-    ('tests/unit/browser/http/test_content_disposition.py',
-        'qutebrowser/browser/rfc6266.py'),
-    ('tests/unit/browser/test_webelem.py',
+    ('tests/unit/browser/webkit/test_cache.py',
+        'qutebrowser/browser/webkit/cache.py'),
+    ('tests/unit/browser/webkit/test_cookies.py',
+        'qutebrowser/browser/webkit/cookies.py'),
+    ('tests/unit/browser/webkit/test_history.py',
+        'qutebrowser/browser/history.py'),
+    ('tests/unit/browser/webkit/test_history.py',
+        'qutebrowser/browser/webkit/webkithistory.py'),
+    ('tests/unit/browser/webkit/test_tabhistory.py',
+        'qutebrowser/browser/webkit/tabhistory.py'),
+    ('tests/unit/browser/webkit/http/test_http.py',
+        'qutebrowser/browser/webkit/http.py'),
+    ('tests/unit/browser/webkit/http/test_content_disposition.py',
+        'qutebrowser/browser/webkit/rfc6266.py'),
+    ('tests/unit/browser/webkit/test_webkitelem.py',
+        'qutebrowser/browser/webkit/webkitelem.py'),
+    ('tests/unit/browser/webkit/test_webkitelem.py',
         'qutebrowser/browser/webelem.py'),
-    ('tests/unit/browser/network/test_schemehandler.py',
-        'qutebrowser/browser/network/schemehandler.py'),
-    ('tests/unit/browser/network/test_filescheme.py',
-        'qutebrowser/browser/network/filescheme.py'),
-    ('tests/unit/browser/network/test_networkreply.py',
-        'qutebrowser/browser/network/networkreply.py'),
-    ('tests/unit/browser/network/test_pastebin.py',
-        'qutebrowser/browser/network/pastebin.py'),
+    ('tests/unit/browser/webkit/network/test_schemehandler.py',
+        'qutebrowser/browser/webkit/network/schemehandler.py'),
+    ('tests/unit/browser/webkit/network/test_filescheme.py',
+        'qutebrowser/browser/webkit/network/filescheme.py'),
+    ('tests/unit/browser/webkit/network/test_networkreply.py',
+        'qutebrowser/browser/webkit/network/networkreply.py'),
+
     ('tests/unit/browser/test_signalfilter.py',
         'qutebrowser/browser/signalfilter.py'),
+    ('tests/unit/browser/test_shared.py',
+        'qutebrowser/browser/shared.py'),
+    # ('tests/unit/browser/test_tab.py',
+    #     'qutebrowser/browser/tab.py'),
 
     ('tests/unit/keyinput/test_basekeyparser.py',
         'qutebrowser/keyinput/basekeyparser.py'),
@@ -91,6 +100,10 @@ PERFECT_FILES = [
         'qutebrowser/misc/cmdhistory.py'),
     ('tests/unit/misc/test_ipc.py',
         'qutebrowser/misc/ipc.py'),
+    ('tests/unit/misc/test_keyhints.py',
+        'qutebrowser/misc/keyhintwidget.py'),
+    ('tests/unit/misc/test_pastebin.py',
+        'qutebrowser/misc/pastebin.py'),
 
     (None,
         'qutebrowser/mainwindow/statusbar/keystring.py'),
@@ -106,6 +119,8 @@ PERFECT_FILES = [
         'qutebrowser/mainwindow/statusbar/prompt.py'),
     ('tests/unit/mainwindow/statusbar/test_url.py',
         'qutebrowser/mainwindow/statusbar/url.py'),
+    ('tests/unit/mainwindow/test_messageview.py',
+        'qutebrowser/mainwindow/messageview.py'),
 
     ('tests/unit/config/test_configtypes.py',
         'qutebrowser/config/configtypes.py'),
@@ -136,11 +151,21 @@ PERFECT_FILES = [
         'qutebrowser/utils/jinja.py'),
     ('tests/unit/utils/test_error.py',
         'qutebrowser/utils/error.py'),
+    ('tests/unit/utils/test_typing.py',
+        'qutebrowser/utils/typing.py'),
+    ('tests/unit/utils/test_javascript.py',
+        'qutebrowser/utils/javascript.py'),
+
+    ('tests/unit/completion/test_models.py',
+        'qutebrowser/completion/models/base.py'),
+    ('tests/unit/completion/test_sortfilter.py',
+        'qutebrowser/completion/models/sortfilter.py'),
+
 ]
 
 
-# 100% coverage because of integration tests, but no perfect unit tests yet.
-WHITELISTED_FILES = []
+# 100% coverage because of end2end tests, but no perfect unit tests yet.
+WHITELISTED_FILES = ['qutebrowser/browser/webkit/webkitinspector.py']
 
 
 class Skipped(Exception):
@@ -208,12 +233,13 @@ def check(fileobj, perfect_files):
         if filename in perfect_src_files and is_bad:
             text = "{} has {}% line and {}% branch coverage!".format(
                 filename, line_cov, branch_cov)
-            messages.append(Message(MsgType.insufficent_coverage, text))
+            messages.append(Message(MsgType.insufficent_coverage, filename,
+                                    text))
         elif (filename not in perfect_src_files and not is_bad and
-                filename not in WHITELISTED_FILES):
+              filename not in WHITELISTED_FILES):
             text = ("{} has 100% coverage but is not in "
                     "perfect_files!".format(filename))
-            messages.append(Message(MsgType.perfect_file, text))
+            messages.append(Message(MsgType.perfect_file, filename, text))
 
     return messages
 
@@ -234,8 +260,13 @@ def main_check():
         for msg in messages:
             print(msg.text)
         print()
-        print("You can run 'tox -e py35-cov' (or py34-cov) locally and check "
-              "htmlcov/index.html to debug this.")
+        filters = ','.join(msg.filename for msg in messages)
+        subprocess.check_call([sys.executable, '-m', 'coverage', 'report',
+                               '--show-missing', '--include', filters])
+        print()
+        print("To debug this, run 'tox -e py35-cov' (or py34-cov) locally and "
+              "check htmlcov/index.html")
+        print("or check https://codecov.io/github/The-Compiler/qutebrowser")
         print()
 
     if 'CI' in os.environ:
@@ -251,15 +282,15 @@ def main_check_all():
     This makes sure the files have 100% coverage without running unrelated
     tests.
 
-    This runs py.test with the used executable, so check_coverage.py should be
+    This runs pytest with the used executable, so check_coverage.py should be
     called with something like ./.tox/py34/bin/python.
     """
     for test_file, src_file in PERFECT_FILES:
         if test_file is None:
             continue
-        subprocess.check_call([sys.executable, '-m', 'py.test', '--cov',
-                               'qutebrowser', '--cov-report', 'xml',
-                               test_file])
+        subprocess.check_call(
+            [sys.executable, '-m', 'pytest', '--cov', 'qutebrowser',
+             '--cov-report', 'xml', test_file])
         with open('coverage.xml', encoding='utf-8') as f:
             messages = check(f, [(test_file, src_file)])
         os.remove('coverage.xml')

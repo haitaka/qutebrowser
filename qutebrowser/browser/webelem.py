@@ -17,7 +17,7 @@
 # You should have received a copy of the GNU General Public License
 # along with qutebrowser.  If not, see <http://www.gnu.org/licenses/>.
 
-"""Utilities related to QWebElements.
+"""Generic web element related code.
 
 Module attributes:
     Group: Enum for different kinds of groups.
@@ -28,17 +28,16 @@ Module attributes:
 """
 
 import collections.abc
-import functools
 
-from PyQt5.QtCore import QRect, QUrl
-from PyQt5.QtWebKit import QWebElement
+from PyQt5.QtCore import QUrl, Qt, QEvent, QTimer
+from PyQt5.QtGui import QMouseEvent
 
 from qutebrowser.config import config
-from qutebrowser.utils import log, usertypes, utils
+from qutebrowser.utils import log, usertypes, utils, qtutils
 
 
 Group = usertypes.enum('Group', ['all', 'links', 'images', 'url', 'prevnext',
-                                 'focus'])
+                                 'inputs'])
 
 
 SELECTORS = {
@@ -49,7 +48,10 @@ SELECTORS = {
     Group.images: 'img',
     Group.url: '[src], [href]',
     Group.prevnext: 'a, area, button, link, [role=button]',
-    Group.focus: '*:focus',
+    Group.inputs: ('input[type=text], input[type=email], input[type=url], '
+                   'input[type=tel], input[type=number], '
+                   'input[type=password], input[type=search], '
+                   'input:not([type]), textarea'),
 }
 
 
@@ -63,121 +65,130 @@ FILTERS = {
 }
 
 
-class IsNullError(Exception):
+class Error(Exception):
 
-    """Gets raised by WebElementWrapper if an element is null."""
+    """Base class for WebElement errors."""
 
     pass
 
 
-class WebElementWrapper(collections.abc.MutableMapping):
+class AbstractWebElement(collections.abc.MutableMapping):
 
-    """A wrapper around QWebElement to make it more intelligent."""
+    """A wrapper around QtWebKit/QtWebEngine web element.
 
-    def __init__(self, elem):
-        if isinstance(elem, self.__class__):
-            raise TypeError("Trying to wrap a wrapper!")
-        if elem.isNull():
-            raise IsNullError('{} is a null element!'.format(elem))
-        self._elem = elem
-        for name in ('addClass', 'appendInside', 'appendOutside',
-                     'attributeNS', 'classes', 'clone', 'document',
-                     'encloseContentsWith', 'encloseWith',
-                     'evaluateJavaScript', 'findAll', 'findFirst',
-                     'firstChild', 'geometry', 'hasAttributeNS',
-                     'hasAttributes', 'hasClass', 'hasFocus', 'lastChild',
-                     'localName', 'namespaceUri', 'nextSibling', 'parent',
-                     'prefix', 'prependInside', 'prependOutside',
-                     'previousSibling', 'removeAllChildren',
-                     'removeAttributeNS', 'removeClass', 'removeFromDocument',
-                     'render', 'replace', 'setAttributeNS', 'setFocus',
-                     'setInnerXml', 'setOuterXml', 'setPlainText',
-                     'setStyleProperty', 'styleProperty', 'tagName',
-                     'takeFromDocument', 'toInnerXml', 'toOuterXml',
-                     'toggleClass', 'webFrame', '__eq__', '__ne__'):
-            # We don't wrap some methods for which we have better alternatives:
-            #   - Mapping access for attributeNames/hasAttribute/setAttribute/
-            #     attribute/removeAttribute.
-            #   - isNull is checked automagically.
-            #   - str(...) instead of toPlainText
-            # For the rest, we create a wrapper which checks if the element is
-            # null.
+    Attributes:
+        tab: The tab associated with this element.
+    """
 
-            method = getattr(self._elem, name)
+    def __init__(self, tab):
+        self._tab = tab
 
-            def _wrapper(meth, *args, **kwargs):
-                self._check_vanished()
-                return meth(*args, **kwargs)
-
-            wrapper = functools.partial(_wrapper, method)
-            # We used to do functools.update_wrapper here, but for some reason
-            # when using hints with many links, this accounted for nearly 50%
-            # of the time when profiling, which is unacceptable.
-            setattr(self, name, wrapper)
+    def __eq__(self, other):
+        raise NotImplementedError
 
     def __str__(self):
-        self._check_vanished()
-        return self._elem.toPlainText()
+        return self.text()
+
+    def __getitem__(self, key):
+        raise NotImplementedError
+
+    def __setitem__(self, key, val):
+        raise NotImplementedError
+
+    def __delitem__(self, key):
+        raise NotImplementedError
+
+    def __iter__(self):
+        raise NotImplementedError
+
+    def __len__(self):
+        raise NotImplementedError
 
     def __repr__(self):
         try:
-            html = self.debug_text()
-        except IsNullError:
+            html = utils.compact_text(self.outer_xml(), 500)
+        except Error:
             html = None
         return utils.get_repr(self, html=html)
 
-    def __getitem__(self, key):
-        self._check_vanished()
-        if key not in self:
-            raise KeyError(key)
-        return self._elem.attribute(key)
+    def has_frame(self):
+        """Check if this element has a valid frame attached."""
+        raise NotImplementedError
 
-    def __setitem__(self, key, val):
-        self._check_vanished()
-        self._elem.setAttribute(key, val)
+    def geometry(self):
+        """Get the geometry for this element."""
+        raise NotImplementedError
 
-    def __delitem__(self, key):
-        self._check_vanished()
-        if key not in self:
-            raise KeyError(key)
-        self._elem.removeAttribute(key)
+    def style_property(self, name, *, strategy):
+        """Get the element style resolved with the given strategy."""
+        raise NotImplementedError
 
-    def __contains__(self, key):
-        self._check_vanished()
-        return self._elem.hasAttribute(key)
+    def classes(self):
+        """Get a list of classes assigned to this element."""
+        raise NotImplementedError
 
-    def __iter__(self):
-        self._check_vanished()
-        yield from self._elem.attributeNames()
+    def tag_name(self):
+        """Get the tag name of this element.
 
-    def __len__(self):
-        self._check_vanished()
-        return len(self._elem.attributeNames())
+        The returned name will always be lower-case.
+        """
+        raise NotImplementedError
 
-    def _check_vanished(self):
-        """Raise an exception if the element vanished (is null)."""
-        if self._elem.isNull():
-            raise IsNullError('Element {} vanished!'.format(
-                self._elem))
+    def outer_xml(self):
+        """Get the full HTML representation of this element."""
+        raise NotImplementedError
 
-    def is_visible(self, mainframe):
-        """Check whether the element is currently visible on the screen.
+    def text(self, *, use_js=False):
+        """Get the plain text content for this element.
 
         Args:
-            mainframe: The main QWebFrame.
-
-        Return:
-            True if the element is visible, False otherwise.
+            use_js: Whether to use javascript if the element isn't
+                    content-editable.
         """
-        return is_visible(self._elem, mainframe)
+        # FIXME:qtwebengine what to do about use_js with WebEngine?
+        raise NotImplementedError
 
-    def rect_on_view(self):
-        """Get the geometry of the element relative to the webview."""
-        return rect_on_view(self._elem)
+    def set_text(self, text, *, use_js=False):
+        """Set the given plain text.
+
+        Args:
+            use_js: Whether to use javascript if the element isn't
+                    content-editable.
+        """
+        # FIXME:qtwebengine what to do about use_js with WebEngine?
+        raise NotImplementedError
+
+    def insert_text(self, text):
+        """Insert the given text into the element."""
+        raise NotImplementedError
+
+    def parent(self):
+        """Get the parent element of this element."""
+        # FIXME:qtwebengine get rid of this?
+        raise NotImplementedError
+
+    def rect_on_view(self, *, elem_geometry=None, no_js=False):
+        """Get the geometry of the element relative to the webview.
+
+        Uses the getClientRects() JavaScript method to obtain the collection of
+        rectangles containing the element and returns the first rectangle which
+        is large enough (larger than 1px times 1px). If all rectangles returned
+        by getClientRects() are too small, falls back to elem.rect_on_view().
+
+        Skipping of small rectangles is due to <a> elements containing other
+        elements with "display:block" style, see
+        https://github.com/The-Compiler/qutebrowser/issues/1298
+
+        Args:
+            elem_geometry: The geometry of the element, or None.
+                           Calling QWebElement::geometry is rather expensive so
+                           we want to avoid doing it twice.
+            no_js: Fall back to the Python implementation
+        """
+        raise NotImplementedError
 
     def is_writable(self):
         """Check whether an element is writable."""
-        self._check_vanished()
         return not ('disabled' in self or 'readonly' in self)
 
     def is_content_editable(self):
@@ -190,23 +201,22 @@ class WebElementWrapper(collections.abc.MutableMapping):
             True if the element has a contenteditable attribute,
             False otherwise.
         """
-        self._check_vanished()
         try:
-            return self['contenteditable'].lower() not in ('false', 'inherit')
+            return self['contenteditable'].lower() not in ['false', 'inherit']
         except KeyError:
             return False
 
     def _is_editable_object(self):
         """Check if an object-element is editable."""
         if 'type' not in self:
-            log.webview.debug("<object> without type clicked...")
+            log.webelem.debug("<object> without type clicked...")
             return False
         objtype = self['type'].lower()
         if objtype.startswith('application/') or 'classid' in self:
             # Let's hope flash/java stuff has an application/* mimetype OR
             # at least a classid attribute. Oh, and let's hope images/...
             # DON'T have a classid attribute. HTML sucks.
-            log.webview.debug("<object type='{}'> clicked.".format(objtype))
+            log.webelem.debug("<object type='{}'> clicked.".format(objtype))
             return config.get('input', 'insert-mode-on-plugins')
         else:
             # Image/Audio/...
@@ -239,7 +249,7 @@ class WebElementWrapper(collections.abc.MutableMapping):
         div_classes = ('CodeMirror',  # Javascript editor over a textarea
                        'kix-',        # Google Docs editor
                        'ace_')        # http://ace.c9.io/
-        for klass in self._elem.classes():
+        for klass in self.classes():
             if any([klass.startswith(e) for e in div_classes]):
                 return True
         return False
@@ -254,12 +264,10 @@ class WebElementWrapper(collections.abc.MutableMapping):
         Return:
             True if we should switch to insert mode, False otherwise.
         """
-        # pylint: disable=too-many-return-statements
-        self._check_vanished()
         roles = ('combobox', 'textbox')
-        log.misc.debug("Checking if element is editable: {}".format(
+        log.webelem.debug("Checking if element is editable: {}".format(
             repr(self)))
-        tag = self._elem.tagName().lower()
+        tag = self.tag_name()
         if self.is_content_editable() and self.is_writable():
             return True
         elif self.get('role', None) in roles and self.is_writable():
@@ -268,7 +276,7 @@ class WebElementWrapper(collections.abc.MutableMapping):
             return self._is_editable_input()
         elif tag == 'textarea':
             return self.is_writable()
-        elif tag in ('embed', 'applet'):
+        elif tag in ['embed', 'applet']:
             # Flash/Java/...
             return config.get('input', 'insert-mode-on-plugins') and not strict
         elif tag == 'object':
@@ -280,164 +288,106 @@ class WebElementWrapper(collections.abc.MutableMapping):
 
     def is_text_input(self):
         """Check if this element is some kind of text box."""
-        self._check_vanished()
         roles = ('combobox', 'textbox')
-        tag = self._elem.tagName().lower()
-        return self.get('role', None) in roles or tag in ('input', 'textarea')
+        tag = self.tag_name()
+        return self.get('role', None) in roles or tag in ['input', 'textarea']
 
     def remove_blank_target(self):
         """Remove target from link."""
-        elem = self._elem
+        elem = self
         for _ in range(5):
             if elem is None:
                 break
-            tag = elem.tagName().lower()
+            tag = elem.tag_name()
             if tag == 'a' or tag == 'area':
-                if elem.attribute('target') == '_blank':
-                    elem.setAttribute('target', '_top')
+                if elem.get('target', None) == '_blank':
+                    elem['target'] = '_top'
                 break
             elem = elem.parent()
 
-    def debug_text(self):
-        """Get a text based on an element suitable for debug output."""
-        self._check_vanished()
-        return utils.compact_text(self._elem.toOuterXml(), 500)
+    def resolve_url(self, baseurl):
+        """Resolve the URL in the element's src/href attribute.
 
+        Args:
+            baseurl: The URL to base relative URLs on as QUrl.
 
-def javascript_escape(text):
-    """Escape values special to javascript in strings.
+        Return:
+            A QUrl with the absolute URL, or None.
+        """
+        if baseurl.isRelative():
+            raise ValueError("Need an absolute base URL!")
 
-    With this we should be able to use something like:
-      elem.evaluateJavaScript("this.value='{}'".format(javascript_escape(...)))
-    And all values should work.
-    """
-    # This is a list of tuples because order matters, and using OrderedDict
-    # makes no sense because we don't actually need dict-like properties.
-    replacements = (
-        ('\\', r'\\'),  # First escape all literal \ signs as \\.
-        ("'", r"\'"),   # Then escape ' and " as \' and \".
-        ('"', r'\"'),   # (note it won't hurt when we escape the wrong one).
-        ('\n', r'\n'),  # We also need to escape newlines for some reason.
-        ('\r', r'\r'),
-        ('\x00', r'\x00'),
-        ('\ufeff', r'\ufeff'),
-        # http://stackoverflow.com/questions/2965293/
-        ('\u2028', r'\u2028'),
-        ('\u2029', r'\u2029'),
-    )
-    for orig, repl in replacements:
-        text = text.replace(orig, repl)
-    return text
-
-
-def get_child_frames(startframe):
-    """Get all children recursively of a given QWebFrame.
-
-    Loosely based on http://blog.nextgenetics.net/?e=64
-
-    Args:
-        startframe: The QWebFrame to start with.
-
-    Return:
-        A list of children QWebFrame, or an empty list.
-    """
-    results = []
-    frames = [startframe]
-    while frames:
-        new_frames = []
-        for frame in frames:
-            results.append(frame)
-            new_frames += frame.childFrames()
-        frames = new_frames
-    return results
-
-
-def focus_elem(frame):
-    """Get the focused element in a web frame.
-
-    Args:
-        frame: The QWebFrame to search in.
-    """
-    elem = frame.findFirstElement(SELECTORS[Group.focus])
-    return WebElementWrapper(elem)
-
-
-def rect_on_view(elem, elem_geometry=None):
-    """Get the geometry of the element relative to the webview.
-
-    We need this as a standalone function (as opposed to a WebElementWrapper
-    method) because we want to run is_visible before wrapping when hinting for
-    performance reasons.
-
-    Args:
-        elem: The QWebElement to get the rect for.
-        elem_geometry: The geometry of the element, or None.
-                       Calling QWebElement::geometry is rather expensive so we
-                       want to avoid doing it twice.
-    """
-    if elem.isNull():
-        raise IsNullError("Got called on a null element!")
-    if elem_geometry is None:
-        elem_geometry = elem.geometry()
-    frame = elem.webFrame()
-    rect = QRect(elem_geometry)
-    while frame is not None:
-        rect.translate(frame.geometry().topLeft())
-        rect.translate(frame.scrollPosition() * -1)
-        frame = frame.parentFrame()
-    return rect
-
-
-def is_visible(elem, mainframe):
-    """Check if the given element is visible in the frame.
-
-    We need this as a standalone function (as opposed to a WebElementWrapper
-    method) because we want to check this before wrapping when hinting for
-    performance reasons.
-
-    Args:
-        elem: The QWebElement to check.
-        mainframe: The QWebFrame in which the element should be visible.
-    """
-    if elem.isNull():
-        raise IsNullError("Got called on a null element!")
-    # CSS attributes which hide an element
-    hidden_attributes = {
-        'visibility': 'hidden',
-        'display': 'none',
-    }
-    for k, v in hidden_attributes.items():
-        if elem.styleProperty(k, QWebElement.ComputedStyle) == v:
-            return False
-    elem_geometry = elem.geometry()
-    if not elem_geometry.isValid() and elem_geometry.x() == 0:
-        # Most likely an invisible link
-        return False
-    # First check if the element is visible on screen
-    elem_rect = rect_on_view(elem, elem_geometry=elem_geometry)
-    mainframe_geometry = mainframe.geometry()
-    if elem_rect.isValid():
-        visible_on_screen = mainframe_geometry.intersects(elem_rect)
-    else:
-        # We got an invalid rectangle (width/height 0/0 probably), but this
-        # can still be a valid link.
-        visible_on_screen = mainframe_geometry.contains(
-            elem_rect.topLeft())
-    # Then check if it's visible in its frame if it's not in the main
-    # frame.
-    elem_frame = elem.webFrame()
-    framegeom = QRect(elem_frame.geometry())
-    if not framegeom.isValid():
-        visible_in_frame = False
-    elif elem_frame.parentFrame() is not None:
-        framegeom.moveTo(0, 0)
-        framegeom.translate(elem_frame.scrollPosition())
-        if elem_geometry.isValid():
-            visible_in_frame = framegeom.intersects(elem_geometry)
+        for attr in ['href', 'src']:
+            if attr in self:
+                text = self[attr].strip()
+                break
         else:
-            # We got an invalid rectangle (width/height 0/0 probably), but
-            # this can still be a valid link.
-            visible_in_frame = framegeom.contains(elem_geometry.topLeft())
-    else:
-        visible_in_frame = visible_on_screen
-    return all([visible_on_screen, visible_in_frame])
+            return None
+
+        url = QUrl(text)
+        if not url.isValid():
+            return None
+        if url.isRelative():
+            url = baseurl.resolved(url)
+        qtutils.ensure_valid(url)
+        return url
+
+    def _mouse_pos(self):
+        """Get the position to click/hover."""
+        # Click the center of the largest square fitting into the top/left
+        # corner of the rectangle, this will help if part of the <a> element
+        # is hidden behind other elements
+        # https://github.com/The-Compiler/qutebrowser/issues/1005
+        rect = self.rect_on_view()
+        if rect.width() > rect.height():
+            rect.setWidth(rect.height())
+        else:
+            rect.setHeight(rect.width())
+        pos = rect.center()
+        if pos.x() < 0 or pos.y() < 0:
+            raise Error("Element position is out of view!")
+        return pos
+
+    def click(self, click_target):
+        """Simulate a click on the element."""
+        # FIXME:qtwebengine do we need this?
+        # self._widget.setFocus()
+        self._tab.data.override_target = click_target
+
+        pos = self._mouse_pos()
+
+        log.webelem.debug("Sending fake click to {!r} at position {} with "
+                          "target {}".format(self, pos, click_target))
+
+        if click_target in [usertypes.ClickTarget.tab,
+                            usertypes.ClickTarget.tab_bg,
+                            usertypes.ClickTarget.window]:
+            modifiers = Qt.ControlModifier
+        else:
+            modifiers = Qt.NoModifier
+
+        events = [
+            QMouseEvent(QEvent.MouseMove, pos, Qt.NoButton, Qt.NoButton,
+                        Qt.NoModifier),
+            QMouseEvent(QEvent.MouseButtonPress, pos, Qt.LeftButton,
+                        Qt.LeftButton, modifiers),
+            QMouseEvent(QEvent.MouseButtonRelease, pos, Qt.LeftButton,
+                        Qt.NoButton, modifiers),
+        ]
+
+        for evt in events:
+            self._tab.send_event(evt)
+
+        def after_click():
+            """Move cursor to end and reset override_target after clicking."""
+            if self.is_text_input() and self.is_editable():
+                self._tab.caret.move_to_end_of_document()
+            self._tab.data.override_target = None
+        QTimer.singleShot(0, after_click)
+
+    def hover(self):
+        """Simulate a mouse hover over the element."""
+        pos = self._mouse_pos()
+        event = QMouseEvent(QEvent.MouseMove, pos, Qt.NoButton, Qt.NoButton,
+                            Qt.NoModifier)
+        self._tab.send_event(event)

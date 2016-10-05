@@ -17,8 +17,6 @@
 # You should have received a copy of the GNU General Public License
 # along with qutebrowser.  If not, see <http://www.gnu.org/licenses/>.
 
-"""Tests for qutebrowser.browser.pdfjs."""
-
 import textwrap
 
 import pytest
@@ -28,7 +26,7 @@ from qutebrowser.browser import pdfjs
 
 
 # Note that we got double protection, once because we use QUrl.FullyEncoded and
-# because we use qutebrowser.browser.webelem.javascript_escape.  Characters
+# because we use qutebrowser.utils.javascript.string_escape.  Characters
 # like " are already replaced by QUrl.
 @pytest.mark.parametrize('url, expected', [
     ('http://foo.bar', "http://foo.bar"),

@@ -28,12 +28,12 @@ import warnings
 import pytest
 import hypothesis
 
+pytest.register_assert_rewrite('helpers')
+
 from helpers import logfail
 from helpers.logfail import fail_on_logging
 from helpers.messagemock import message_mock
 from helpers.fixtures import *  # pylint: disable=wildcard-import
-
-from PyQt5.QtCore import PYQT_VERSION
 
 
 # Set hypothesis settings
@@ -54,8 +54,6 @@ def _apply_platform_markers(item):
             "Can't be run when frozen"),
         ('frozen', not getattr(sys, 'frozen', False),
             "Can only run when frozen"),
-        ('pyqt531_or_newer', PYQT_VERSION < 0x050301,
-            "Needs PyQt 5.3.1 or newer"),
         ('ci', 'CI' not in os.environ, "Only runs on CI."),
     ]
 
@@ -74,7 +72,7 @@ def _apply_platform_markers(item):
         item.add_marker(skipif_marker)
 
 
-def pytest_collection_modifyitems(items):
+def pytest_collection_modifyitems(config, items):
     """Handle custom markers.
 
     pytest hook called after collection has been performed.
@@ -84,8 +82,8 @@ def pytest_collection_modifyitems(items):
 
     For example:
 
-        py.test -m "not gui"  # run all tests except gui tests
-        py.test -m "gui"  # run only gui tests
+        pytest -m "not gui"  # run all tests except gui tests
+        pytest -m "gui"  # run only gui tests
 
     It also handles the platform specific markers by translating them to skipif
     markers.
@@ -97,7 +95,12 @@ def pytest_collection_modifyitems(items):
     Reference:
         http://pytest.org/latest/plugins.html
     """
+    remaining_items = []
+    deselected_items = []
+
     for item in items:
+        deselected = False
+
         if 'qapp' in getattr(item, 'fixturenames', ()):
             item.add_marker('gui')
 
@@ -106,20 +109,34 @@ def pytest_collection_modifyitems(items):
                 item.module.__file__,
                 os.path.commonprefix([__file__, item.module.__file__]))
 
-            module_root_dir = os.path.split(module_path)[0]
-            if module_root_dir == 'integration':
-                item.add_marker(pytest.mark.integration)
+            module_root_dir = module_path.split(os.sep)[0]
+            assert module_root_dir in ['end2end', 'unit', 'helpers',
+                                       'test_conftest.py']
+            if module_root_dir == 'end2end':
+                item.add_marker(pytest.mark.end2end)
+            elif os.environ.get('QUTE_BDD_WEBENGINE', ''):
+                deselected = True
 
         _apply_platform_markers(item)
         if item.get_marker('xfail_norun'):
             item.add_marker(pytest.mark.xfail(run=False))
+        if item.get_marker('flaky_once'):
+            item.add_marker(pytest.mark.flaky(reruns=1))
+
+        if deselected:
+            deselected_items.append(item)
+        else:
+            remaining_items.append(item)
+
+    config.hook.pytest_deselected(items=deselected_items)
+    items[:] = remaining_items
 
 
 def pytest_ignore_collect(path):
-    """Ignore BDD tests during collection if frozen."""
+    """Ignore BDD tests if we're unable to run them."""
+    skip_bdd = hasattr(sys, 'frozen')
     rel_path = path.relto(os.path.dirname(__file__))
-    return (rel_path == os.path.join('integration', 'features') and
-            hasattr(sys, 'frozen'))
+    return rel_path == os.path.join('end2end', 'features') and skip_bdd
 
 
 @pytest.fixture(scope='session')
@@ -129,18 +146,24 @@ def qapp(qapp):
     return qapp
 
 
-@pytest.yield_fixture(autouse=True)
-def fail_tests_on_warnings():
-    warnings.simplefilter('error')
-    yield
-    warnings.resetwarnings()
-
-
 def pytest_addoption(parser):
     parser.addoption('--qute-delay', action='store', default=0, type=int,
                      help="Delay between qutebrowser commands.")
     parser.addoption('--qute-profile-subprocs', action='store_true',
                      default=False, help="Run cProfile for subprocesses.")
+    parser.addoption('--qute-bdd-webengine', action='store_true',
+                     help='Use QtWebEngine for BDD tests')
+
+
+def pytest_configure(config):
+    webengine_arg = config.getoption('--qute-bdd-webengine')
+    webengine_env = os.environ.get('QUTE_BDD_WEBENGINE', '')
+    config.webengine = bool(webengine_arg or webengine_env)
+    # Fail early if QtWebEngine is not available
+    # pylint: disable=no-name-in-module,unused-variable,useless-suppression
+    if config.webengine:
+        import PyQt5.QtWebEngineWidgets
+    # pylint: enable=no-name-in-module,unused-variable,useless-suppression
 
 
 @pytest.fixture(scope='session', autouse=True)
@@ -163,3 +186,21 @@ def pytest_runtest_makereport(item, call):
     outcome = yield
     rep = outcome.get_result()
     setattr(item, "rep_" + rep.when, rep)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_sessionfinish(exitstatus):
+    """Create a file to tell run_pytest.py how pytest exited."""
+    outcome = yield
+    outcome.get_result()
+
+    cache_dir = os.path.join(os.path.abspath(os.path.dirname(__file__)),
+                             '..', '.cache')
+    try:
+        os.mkdir(cache_dir)
+    except FileExistsError:
+        pass
+
+    status_file = os.path.join(cache_dir, 'pytest_status')
+    with open(status_file, 'w', encoding='ascii') as f:
+        f.write(str(exitstatus))

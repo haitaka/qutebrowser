@@ -65,7 +65,7 @@ class NeighborList(collections.abc.Sequence):
         _mode: The current mode.
     """
 
-    Modes = enum('Modes', ['block', 'wrap', 'exception'])
+    Modes = enum('Modes', ['edge', 'exception'])
 
     def __init__(self, items=None, default=_UNSET, mode=Modes.exception):
         """Constructor.
@@ -74,8 +74,7 @@ class NeighborList(collections.abc.Sequence):
             items: The list of items to iterate in.
             _default: The initially selected value.
             _mode: Behavior when the first/last item is reached.
-                   Modes.block: Stay on the selected item
-                   Modes.wrap: Wrap around to the other end
+                   Modes.edge: Go to the first/last item
                    Modes.exception: Raise an IndexError.
         """
         if not isinstance(mode, self.Modes):
@@ -141,12 +140,12 @@ class NeighborList(collections.abc.Sequence):
             else:
                 raise IndexError
         except IndexError:
-            if self._mode == self.Modes.block:
-                new = self.curitem()
-            elif self._mode == self.Modes.wrap:
-                self._idx += offset
-                self._idx %= len(self.items)
-                new = self.curitem()
+            if self._mode == self.Modes.edge:
+                assert offset != 0
+                if offset > 0:
+                    new = self.lastitem()
+                else:
+                    new = self.firstitem()
             elif self._mode == self.Modes.exception:  # pragma: no branch
                 raise
         else:
@@ -222,27 +221,101 @@ class NeighborList(collections.abc.Sequence):
 
 
 # The mode of a Question.
-PromptMode = enum('PromptMode', ['yesno', 'text', 'user_pwd', 'alert'])
+PromptMode = enum('PromptMode', ['yesno', 'text', 'user_pwd', 'alert',
+                                 'download'])
 
 
 # Where to open a clicked link.
-ClickTarget = enum('ClickTarget', ['normal', 'tab', 'tab_bg', 'window'])
+ClickTarget = enum('ClickTarget', ['normal', 'tab', 'tab_bg', 'window',
+                                   'hover'])
 
 
 # Key input modes
 KeyMode = enum('KeyMode', ['normal', 'hint', 'command', 'yesno', 'prompt',
-                           'insert', 'passthrough', 'caret'])
+                           'insert', 'passthrough', 'caret', 'set_mark',
+                           'jump_mark'])
 
 
 # Available command completions
 Completion = enum('Completion', ['command', 'section', 'option', 'value',
                                  'helptopic', 'quickmark_by_name',
-                                 'bookmark_by_url', 'url', 'tab', 'sessions'])
+                                 'bookmark_by_url', 'url', 'tab', 'sessions',
+                                 'bind'])
 
 
 # Exit statuses for errors. Needs to be an int for sys.exit.
 Exit = enum('Exit', ['ok', 'reserved', 'exception', 'err_ipc', 'err_init',
                      'err_config', 'err_key_config'], is_int=True, start=0)
+
+
+# Load status of a tab
+LoadStatus = enum('LoadStatus', ['none', 'success', 'success_https', 'error',
+                                 'warn', 'loading'])
+
+
+# Backend of a tab
+Backend = enum('Backend', ['QtWebKit', 'QtWebEngine'])
+arg2backend = {
+    'webkit': Backend.QtWebKit,
+    'webengine': Backend.QtWebEngine,
+}
+
+
+# JS world for QtWebEngine
+JsWorld = enum('JsWorld', ['main', 'application', 'user', 'jseval'])
+
+
+MessageLevel = enum('MessageLevel', ['error', 'warning', 'info'])
+
+
+# Where a download should be saved
+class DownloadTarget:
+
+    """Abstract base class for different download targets."""
+
+    def __init__(self):
+        raise NotImplementedError
+
+
+class FileDownloadTarget(DownloadTarget):
+
+    """Save the download to the given file.
+
+    Attributes:
+        filename: Filename where the download should be saved.
+    """
+
+    def __init__(self, filename):
+        # pylint: disable=super-init-not-called
+        self.filename = filename
+
+
+class FileObjDownloadTarget(DownloadTarget):
+
+    """Save the download to the given file-like object.
+
+    Attributes:
+        fileobj: File-like object where the download should be written to.
+    """
+
+    def __init__(self, fileobj):
+        # pylint: disable=super-init-not-called
+        self.fileobj = fileobj
+
+
+class OpenFileDownloadTarget(DownloadTarget):
+
+    """Save the download in a temp dir and directly open it.
+
+    Attributes:
+        cmdline: The command to use as string. A `{}` is expanded to the
+                 filename. None means to use the system's default application.
+                 If no `{}` is found, the filename is appended to the cmdline.
+    """
+
+    def __init__(self, cmdline=None):
+        # pylint: disable=super-init-not-called
+        self.cmdline = cmdline
 
 
 class Question(QObject):

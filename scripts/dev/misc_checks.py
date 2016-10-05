@@ -31,7 +31,7 @@ import traceback
 import collections
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir,
-                os.pardir))
+                                os.pardir))
 
 from scripts import utils
 
@@ -49,7 +49,7 @@ def _get_files(only_py=False):
         if only_py:
             endings = {'.py'}
         else:
-            endings = {'.py', '.asciidoc', '.js'}
+            endings = {'.py', '.asciidoc', '.js', '.feature'}
         files = (e for e in filenames if os.path.splitext(e)[1] in endings)
         for name in files:
             yield os.path.join(dirpath, name)
@@ -81,14 +81,14 @@ def check_spelling():
     """Check commonly misspelled words."""
     # Words which I often misspell
     words = {'[Bb]ehaviour', '[Qq]uitted', 'Ll]ikelyhood', '[Ss]ucessfully',
-             '[Oo]ccur[^r .]', '[Ss]eperator', '[Ee]xplicitely', '[Rr]esetted',
+             '[Oo]ccur[^rs .]', '[Ss]eperator', '[Ee]xplicitely',
              '[Aa]uxillary', '[Aa]ccidentaly', '[Aa]mbigious', '[Ll]oosly',
              '[Ii]nitialis', '[Cc]onvienence', '[Ss]imiliar', '[Uu]ncommited',
              '[Rr]eproducable', '[Aa]n [Uu]ser', '[Cc]onvienience',
              '[Ww]ether', '[Pp]rogramatically', '[Ss]plitted', '[Ee]xitted',
              '[Mm]ininum', '[Rr]esett?ed', '[Rr]ecieved', '[Rr]egularily',
              '[Uu]nderlaying', '[Ii]nexistant', '[Ee]lipsis', 'commiting',
-             'existant'}
+             'existant', '[Rr]esetted'}
 
     # Words which look better when splitted, but might need some fine tuning.
     words |= {'[Ww]ebelements', '[Mm]ouseevent', '[Kk]eysequence',
@@ -101,6 +101,8 @@ def check_spelling():
     ignored = [
         os.path.join('.', 'scripts', 'dev', 'misc_checks.py'),
         os.path.join('.', 'qutebrowser', '3rdparty', 'pdfjs'),
+        os.path.join('.', 'tests', 'end2end', 'data', 'hints', 'ace',
+                     'ace.js'),
     ]
 
     seen = collections.defaultdict(list)
@@ -112,7 +114,9 @@ def check_spelling():
                     continue
                 for line in f:
                     for w in words:
-                        if re.search(w, line) and fn not in seen[w]:
+                        if (re.search(w, line) and
+                                fn not in seen[w] and
+                                '# pragma: no spellcheck' not in line):
                             print('Found "{}" in {}!'.format(w, fn))
                             seen[w].append(fn)
                             ok = False

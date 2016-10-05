@@ -33,7 +33,7 @@ import cx_Freeze as cx  # pylint: disable=import-error,useless-suppression
 # cx_Freeze is hard to install (needs C extensions) so we don't check for it.
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir,
-                os.pardir))
+                                os.pardir))
 from scripts import setupcommon
 
 
@@ -47,6 +47,16 @@ def get_egl_path():
         return None
     return os.path.join(distutils.sysconfig.get_python_lib(),
                         r'PyQt5\libEGL.dll')
+
+
+def get_plugin_folders():
+    """Get the plugin folders to copy to the output."""
+    if not sys.platform.startswith('win'):
+        return []
+    plugin_dir = os.path.join(distutils.sysconfig.get_python_lib(),
+                              'PyQt5', 'plugins')
+    folders = ['audio', 'iconengines', 'mediaservice', 'printsupport']
+    return [os.path.join(plugin_dir, folder) for folder in folders]
 
 
 def get_build_exe_options(skip_html=False):
@@ -81,6 +91,8 @@ def get_build_exe_options(skip_html=False):
     if egl_path is not None:
         include_files.append((egl_path, 'libEGL.dll'))
 
+    include_files += get_plugin_folders()
+
     return {
         'include_files': include_files,
         'include_msvcr': True,
@@ -88,7 +100,8 @@ def get_build_exe_options(skip_html=False):
         'excludes': ['tkinter'],
         'packages': ['pygments', 'pkg_resources._vendor.packaging',
                      'pkg_resources._vendor.pyparsing',
-                     'pkg_resources._vendor.six'],
+                     'pkg_resources._vendor.six',
+                     'pkg_resources._vendor.appdirs'],
     }
 
 
@@ -115,16 +128,6 @@ def main():
         'add_to_path': False,
     }
 
-    bdist_dmg_options = {
-        'applications_shortcut': True,
-    }
-
-    bdist_mac_options = {
-        'qt_menu_nib': os.path.join(BASEDIR, 'misc', 'qt_menu.nib'),
-        'iconfile': os.path.join(BASEDIR, 'icons', 'qutebrowser.icns'),
-        'bundle_name': 'qutebrowser',
-    }
-
     try:
         setupcommon.write_git_file()
         cx.setup(
@@ -132,8 +135,6 @@ def main():
             options={
                 'build_exe': get_build_exe_options(),
                 'bdist_msi': bdist_msi_options,
-                'bdist_mac': bdist_mac_options,
-                'bdist_dmg': bdist_dmg_options,
             },
             **setupcommon.setupdata
         )

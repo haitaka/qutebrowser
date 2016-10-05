@@ -24,6 +24,8 @@ Module attributes:
     aliases: A list of all aliases, needed for doc generation.
 """
 
+import inspect
+
 from qutebrowser.utils import qtutils, log
 from qutebrowser.commands import command, cmdexc
 
@@ -44,36 +46,6 @@ def check_overflow(arg, ctype):
         raise cmdexc.CommandError(
             "Numeric argument is too large for internal {} "
             "representation.".format(ctype))
-
-
-def arg_or_count(arg, count, default=None, countzero=None):
-    """Get a value based on an argument and count given to a command.
-
-    If both arg and count are set, ValueError is raised.
-    If only arg/count is set, it is used.
-    If none is set, a default is returned or ValueError is raised.
-
-    Args:
-        arg: The argument given to a command.
-        count: The count given to a command.
-        countzero: Special value if count is 0.
-
-    Return:
-        The value to use.
-    """
-    if count is not None and arg is not None:
-        raise ValueError("Both count and argument given!")
-    elif arg is not None:
-        return arg
-    elif count is not None:
-        if countzero is not None and count == 0:
-            return countzero
-        else:
-            return count
-    elif default is not None:
-        return default
-    else:
-        raise ValueError("Either count or argument have to be set!")
 
 
 def check_exclusive(flags, names):
@@ -163,4 +135,36 @@ class register:  # pylint: disable=invalid-name
         for name in names:
             cmd_dict[name] = cmd
         aliases += names[1:]
+        return func
+
+
+class argument:  # pylint: disable=invalid-name
+
+    """Decorator to customize an argument for @cmdutils.register.
+
+    This could also be a function, but as a class (with a "wrong" name) it's
+    much cleaner to implement.
+
+    Attributes:
+        _argname: The name of the argument to handle.
+        _kwargs: Keyword arguments, valid ArgInfo members
+    """
+
+    def __init__(self, argname, **kwargs):
+        self._argname = argname
+        self._kwargs = kwargs
+
+    def __call__(self, func):
+        funcname = func.__name__
+
+        if self._argname not in inspect.signature(func).parameters:
+            raise ValueError("{} has no argument {}!".format(funcname,
+                                                             self._argname))
+        if not hasattr(func, 'qute_args'):
+            func.qute_args = {}
+        elif func.qute_args is None:
+            raise ValueError("@cmdutils.argument got called above (after) "
+                             "@cmdutils.register for {}!".format(funcname))
+
+        func.qute_args[self._argname] = command.ArgInfo(**self._kwargs)
         return func

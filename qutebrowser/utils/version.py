@@ -29,30 +29,17 @@ import importlib
 import collections
 
 from PyQt5.QtCore import QT_VERSION_STR, PYQT_VERSION_STR, qVersion
-from PyQt5.QtWebKit import qWebKitVersion
 from PyQt5.QtNetwork import QSslSocket
 from PyQt5.QtWidgets import QApplication
 
+try:
+    from PyQt5.QtWebKit import qWebKitVersion
+except ImportError:  # pragma: no cover
+    qWebKitVersion = None
+
 import qutebrowser
-from qutebrowser.utils import log, utils
+from qutebrowser.utils import log, utils, standarddir
 from qutebrowser.browser import pdfjs
-
-
-GPL_BOILERPLATE = """
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with this program.  If not, see <http://www.gnu.org/licenses/> or use
-:open qute:gpl.
-"""
 
 
 def _git_str():
@@ -110,11 +97,19 @@ def _release_info():
     Return:
         list of (filename, content) tuples.
     """
+    blacklisted = ['ANSI_COLOR=', 'HOME_URL=', 'SUPPORT_URL=',
+                   'BUG_REPORT_URL=']
     data = []
     for fn in glob.glob("/etc/*-release"):
+        lines = []
         try:
             with open(fn, 'r', encoding='utf-8') as f:
-                data.append((fn, f.read()))  # pragma: no branch
+                for line in f.read().strip().splitlines():
+                    if not any(line.startswith(bl) for bl in blacklisted):
+                        lines.append(line)
+
+                if lines:
+                    data.append((fn, '\n'.join(lines)))
         except OSError:
             log.misc.exception("Error while reading {}.".format(fn))
     return data
@@ -129,13 +124,14 @@ def _module_versions():
     lines = []
     modules = collections.OrderedDict([
         ('sip', ['SIP_VERSION_STR']),
-        ('colorlog', []),
         ('colorama', ['VERSION', '__version__']),
         ('pypeg2', ['__version__']),
         ('jinja2', ['__version__']),
         ('pygments', ['__version__']),
         ('yaml', ['__version__']),
         ('cssutils', ['__version__']),
+        ('typing', []),
+        ('PyQt5.QtWebEngineWidgets', []),
     ])
     for name, attributes in modules.items():
         try:
@@ -154,6 +150,22 @@ def _module_versions():
                 text = '{}: yes'.format(name)
         lines.append(text)
     return lines
+
+
+def _path_info():
+    """Get info about important path names.
+
+    Return:
+        A dictionary of descriptive to actual path names.
+    """
+    return {
+        'config': standarddir.config(),
+        'data': standarddir.data(),
+        'system_data': standarddir.system_data(),
+        'cache': standarddir.cache(),
+        'download': standarddir.download(),
+        'runtime': standarddir.runtime(),
+    }
 
 
 def _os_info():
@@ -175,7 +187,7 @@ def _os_info():
             versioninfo = ''
         else:
             versioninfo = '.'.join(versioninfo)
-        osver = ', '.join([e for e in (release, versioninfo, machine) if e])
+        osver = ', '.join([e for e in [release, versioninfo, machine] if e])
     else:
         osver = '?'
     lines.append('OS Version: {}'.format(osver))
@@ -197,53 +209,74 @@ def _pdfjs_version():
         return 'no'
     else:
         pdfjs_file = pdfjs_file.decode('utf-8')
-        version_re = re.compile(r"^PDFJS\.version = '([^']+)';$", re.MULTILINE)
+        version_re = re.compile(
+            r"^(PDFJS\.version|var pdfjsVersion) = '([^']+)';$", re.MULTILINE)
+
         match = version_re.search(pdfjs_file)
         if not match:
             pdfjs_version = 'unknown'
         else:
-            pdfjs_version = match.group(1)
+            pdfjs_version = match.group(2)
         if file_path is None:
             file_path = 'bundled'
         return '{} ({})'.format(pdfjs_version, file_path)
 
 
-def version(short=False):
-    """Return a string with various version informations.
-
-    Args:
-        short: Return a shortened output.
-    """
+def version():
+    """Return a string with various version informations."""
     lines = ["qutebrowser v{}".format(qutebrowser.__version__)]
     gitver = _git_str()
     if gitver is not None:
         lines.append("Git commit: {}".format(gitver))
+
+    if qVersion() != QT_VERSION_STR:
+        qt_version = 'Qt: {} (compiled {})'.format(qVersion(), QT_VERSION_STR)
+    else:
+        qt_version = 'Qt: {}'.format(qVersion())
+
     lines += [
         '',
         '{}: {}'.format(platform.python_implementation(),
                         platform.python_version()),
-        'Qt: {}, runtime: {}'.format(QT_VERSION_STR, qVersion()),
+        qt_version,
         'PyQt: {}'.format(PYQT_VERSION_STR),
+        '',
     ]
 
-    if not short:
-        style = QApplication.instance().style()
-        lines += [
-            'Style: {}'.format(style.metaObject().className()),
-            'Desktop: {}'.format(os.environ.get('DESKTOP_SESSION')),
-        ]
+    lines += _module_versions()
 
-        lines += _module_versions()
+    lines += ['pdf.js: {}'.format(_pdfjs_version())]
 
-        lines += [
-            'pdf.js: {}'.format(_pdfjs_version()),
-            'Webkit: {}'.format(qWebKitVersion()),
-            'Harfbuzz: {}'.format(os.environ.get('QT_HARFBUZZ', 'system')),
-            'SSL: {}'.format(QSslSocket.sslLibraryVersionString()),
-            '',
-            'Frozen: {}'.format(hasattr(sys, 'frozen')),
-            'Platform: {}, {}'.format(platform.platform(),
-                                      platform.architecture()[0]),
-        ]
-        lines += _os_info()
+    if qWebKitVersion is None:
+        lines.append('Webkit: no')
+    else:
+        lines.append('Webkit: {}'.format(qWebKitVersion()))
+
+    lines += [
+        'SSL: {}'.format(QSslSocket.sslLibraryVersionString()),
+        '',
+    ]
+
+    qapp = QApplication.instance()
+    if qapp:
+        style = qapp.style()
+        lines.append('Style: {}'.format(style.metaObject().className()))
+
+    importpath = os.path.dirname(os.path.abspath(qutebrowser.__file__))
+
+    lines += [
+        'Platform: {}, {}'.format(platform.platform(),
+                                  platform.architecture()[0]),
+        'Frozen: {}'.format(hasattr(sys, 'frozen')),
+        "Imported from {}".format(importpath),
+    ]
+    lines += _os_info()
+
+    lines += [
+        '',
+        'Paths:',
+    ]
+    for name, path in _path_info().items():
+        lines += ['{}: {}'.format(name, path)]
+
     return '\n'.join(lines)

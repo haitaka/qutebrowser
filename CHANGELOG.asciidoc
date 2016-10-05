@@ -14,19 +14,374 @@ This project adheres to http://semver.org/[Semantic Versioning].
 // `Fixed` for any bug fixes.
 // `Security` to invite users to upgrade in case of vulnerabilities.
 
-v0.7.0 (unreleased)
+v0.9.0 (unreleased)
 -------------------
 
 Added
 ~~~~~
 
-- New `:edit-url` command to edit the URL in an external editor.
+- New `:rl-backward-kill-word` command which does what `:rl-unix-word-rubout`
+  did before v0.8.0.
+- New `:rl-unix-filename-rubout` command which is similar to readline's
+  `unix-filename-rubout`.
+- New `fonts -> completion.category` setting to customize the font used for
+  completion category headers.
+- New `:debug-log-capacity` command to adjust how many lines are logged into RAM
+  (to report bugs which are difficult to reproduce).
+- New `hide-unmatched-rapid-hints` option to not hide hint unmatched hint labels
+  in rapid mode.
+- New `{clipboard}` and `{primary}` replacements for the commandline which
+  replace the `:paste` command.
+- New `:insert-text` command to insert a given text into a field on the page,
+  which replaces `:paste-primary` together with the `{primary}` replacement.
+- New `:window-only` command to close all other windows.
+- New `prev-category` and `next-category` arguments to `:completion-item-focus`
+  to focus the previous/next category in the completion (bound to `<Ctrl-Tab>`
+  and `<Ctrl-Shift-Tab>` by default).
+- New `:click-element` command to fake a click on a element.
+- New `:debug-log-filter` command to change console log filtering on-the-fly.
+- New `:debug-log-level` command to change the console loglevel on-the-fly.
+- New `general -> yank-ignored-url-parameters` option to configure which URL
+  parameters (like `utm_source` etc.) to strip off when yanking an URL.
+- Support for the
+  https://developer.mozilla.org/en-US/docs/Web/API/Page_Visibility_API[HTML5 page visibility API]
+- New `readability` userscript which shows a readable version of a page (using
+  the `readability-lxml` python package)
 
 Changed
 ~~~~~~~
 
+- Hints are now drawn natively in Qt instead of using web elements. This has a
+  few implications for users:
+    * The `hints -> opacity` setting does not exist anymore, but you can use
+      `rgba(r, g, b, alpha)` colors instead for `colors -> hints.bg`.
+    * The `hints -> font` setting is not affected by
+      `fonts -> web-family-fixed` anymore. Thus, a transformer got added to
+      change `Monospace` to `${_monospace}`.
+    * Gradients in hint colors can now be configured by using `qlineargradient`
+      and friends instead of `-webkit-gradient`. The most common cases get
+      migrated automatically, but if you drastically changed the defaults,
+      you'll need to manually adjust your config.
+    * Styling hints by styling `qutehint` elements in `user-stylesheet` was
+      never officially supported and does not work anymore.
+    * Hints are now not affected by the page's stylesheet or zoom anymore.
+- `:bookmark-add` now has a `--toggle` flag which deletes the bookmark if it
+  already exists.
+- `:bookmark-load` now has a `--delete` flag which deletes the bookmark after
+  loading it.
+- `:open` now also accepts quickmark names instead of URLs
+- `:tab-move` now optionally takes an index for absolute moving.
+- Commands taking either an argument or a count (like `:zoom` or `:tab-focus`)
+  now prefer the count instead of showing an error message.
+- `:open` now has an `--implicit` argument to treat the opened tab as implicit
+  (i.e. to open it at the position it would be opened if it was a clicked link)
+- `:download-open` and `:prompt-open-download` now have an optional `cmdline`
+  argument to pass a commandline to open the download with.
+- `:yank` now has a position argument to select what to yank instead of using
+  flags.
+- Replacements like `{url}` can now also be used in the middle of an argument.
+  Consequently, commands taking another command (`:later`, `:repeat` and
+  `:bind`) now don't immediately evaluate variables.
+- Tab titles in the `:buffer` completion now update correctly when a page's
+  title is changed via javascript.
+- `:hint` now has a `--mode <mode>` flag to override the hint mode configured
+  using the `hints -> mode` setting.
+- With `new-instance-open-target` set to a tab option, the tab is now opened in
+  the most recently focused (instead of the last opened) window. This can be
+  configured with the new `new-instance-open-target.window` setting.
+  It can also be set to `last-visible` to show the pages in the most recently
+  visible window, or `first-opened` to use the first (oldest) available window.
+- Word hints now are more clever about getting the element text from some elements.
+- Completions for `:help` and `:bind` now also show hidden commands
+- The `:buffer` completion now also filters using the first column (id).
+- `:undo` has been improved to reopen tabs at the position they were closed.
+- `:navigate` now takes a count for `up`/`increment`/`decrement`.
+- The `hints -> auto-follow` setting now can be set to
+  `always`/`full-match`/`unique-match`/`never` to more precisely control when
+  hints should be followed automatically.
+- Counts can now be used with special keybindings (e.g. with modifiers).
+  This was already implemented for v0.7.0 originally, but got reverted because
+  it caused some issues and then never re-applied.
+- Sending a command to an existing instance (via "qutebrowser :reload") now
+  doesn't mark it as urgent anymore.
+- `tabs -> title-format` now treats an empty string as valid.
+- Bindings for `:`, `/` and `?` are now configured explicitly and not hardcoded
+  anymore.
+- The `completion -> show` setting can now be set to `always`, `auto` or
+  `never`.
+- `:open-editor` can now be used in any mode.
+- Lots of improvements to and bugfixes for the QtWebEngine backend, such as
+  working hints. However, using qutebrowser directly from git is still advised
+  when using `--backend webengine`.
+- `content -> javascript-can-open-windows` got renamed to
+  `javascript-can-open-windows-automatically`.
+- `:prompt-accept` now optionally accepts a value which overrides the one
+  entered in the input box. `yes` and `no` can be used as values for yes/no
+  questions.
+- The new `--qt-arg` and `--qt-flag` arguments can be used to pass
+  arguments/flags to Qt's commandline.
+- Error/warning/info messages are now shown stacked above the statusbar.
+  This also added various new settings:
+    * `colors -> messages.fg.error` (renamed from `statusbar.fg.error`)
+    * `colors -> messages.bg.error` (renamed from `statusbar.bg.error`)
+    * `colors -> messages.border.error`
+    * `colors -> messages.fg.warning` (renamed from `statusbar.fg.warning`)
+    * `colors -> messages.bg.warning` (renamed from `statusbar.bg.warning`)
+    * `colors -> messages.border.warning`
+    * `colors -> messages.fg.info`
+    * `colors -> messages.bg.info`
+    * `colors -> messages.border.info`
+    * `fonts -> messages.error`
+    * `fonts -> messages.warning`
+    * `fonts -> messages.info`
+- The `qute:settings` page now also shows option descriptions.
+- `qute:version` and `qutebrowser --version` now show various important paths
+- `:spawn`/userscripts now show a nicer error when a script wasn't found
+
+Deprecated
+~~~~~~~~~~
+
+- The `:paste` command got deprecated as `:open` with `{clipboard}` and
+  `{primary}` can be used instead.
+- The `:paste-primary` command got deprecated as `:insert-text {primary}` can
+  be used instead.
+- The `:prompt-yes` and `:prompt-no` commands got deprecated as
+  `:prompt-accept yes` and `:prompt-accept no` can be used instead.
+
+Removed
+~~~~~~~
+
+- The `:yank-selected` command got merged into `:yank` as `:yank selection`
+  and thus removed.
+- The `:completion-item-prev` and `:completion-item-next` commands got merged
+  into a new `:completion-focus {prev,next}` command and thus removed.
+- The `ui -> hide-mouse-cursor` setting since it was completely broken and
+  nobody seemed to care.
+- The `hints -> opacity` setting - see the "Changed" section for details.
+- The `completion -> auto-open` setting got merged into `completion -> show` and
+  thus removed.
+- All `--qt-*` arguments got replaced by `--qt-arg` and `--qt-flag` and thus
+  removed.
+
+Fixed
+~~~~~
+
+- `:bind` can now be used to bind to an alias (binding by editing `keys.conf`
+  already worked before)
+- The command completion now updates correctly when changing aliases
+- `:undo` now doesn't undo tabs "closed" by `:tab-detach` anymore.
+- Fixed an issue with hint chars not being cleared correctly when leaving hint
+  mode.
+- `:tab-detach` now fails correctly when there's only one tab open.
+- Various small issues with the command completion
+- The tabbar now displays correctly with the Adwaita Qt theme
+- The default `sk` keybinding now sets the commandline to `:bind` correctly
+- Fixed hang when using multiple spaces in a row with the URL completion
+- Fixed crash when closing a window without focusing it
+- Userscripts now can access QUTE_FIFO correctly on Windows
+
+v0.8.3 (unreleased)
+-------------------
+
+Fixed
+~~~~~
+
+- Fixed crash when doing `:<space><enter>`, another corner-case introduced in v0.8.0
+- Fixed `:open-editor` (`<Ctrl-e>`) on Windows
+- Fixed crash when setting `general -> auto-save-interval` to a too big value.
+- Fixed crash when using hints on Void Linux.
+
+v0.8.2
+------
+
+Fixed
+~~~~~
+
+- Fixed `general -> private-browsing` not being set correctly until a restart
+  (which caused e.g. local storage to be enabled).
+- When hinting input fields (`:t`), also consider input elements without a type.
+- Fixed crash when opening an invalid URL with a percent-encoded and a real @ in it
+- Fixed default `;o` and `;O` bindings
+- Fixed local storage not working (and possible other bugs) when using a
+  relative path with `--basedir`.
+- Fixed crash when deleting a quickmark with Ctrl-D
+- Fixed HTML5 video playback on Windows
+- Fixed crash when using `:prompt-open-download` with a file with chars not
+  encodable with the OS' filesystem encoding (e.g. with `LC_ALL=C`)
+- Fixed `:prompt-open-download` with a too long filename (> 255 bytes)
+- Fixed crash when cancelling a download after doing `:prompt-open-download`
+- Fixed crash when writing a download to disk fails with
+  `:prompt-open-download`.
+- Fixed `:restart` deleting the basedir when it was given with `--basedir`.
+
+v0.8.1
+------
+
+Fixed
+~~~~~
+
+- Fix crash when pressing enter without a command
+- Adjust error message to point out QtWebEngine is unsupported with the OS
+  X .app currently.
+- Hide Harfbuzz warning with the OS X .app
+
+v0.8.0
+------
+
+Added
+~~~~~
+
+- New `:repeat-command` command (mapped to `.`) to repeat the last command.
+  Note that two former default bundings conflict with that binding, unbinding
+  them via `:unbind .i` and `:unbind .o` is recommended.
+- New `qute:bookmarks` page which displays all bookmarks and quickmarks.
+- New `:prompt-open-download` (bound to `Ctrl-X`) which can be used to open a
+  download directly when getting the filename prompt.
+- New `{host}` replacement for tab- and window titles which evaluates
+  to the current host.
+- New default binding `;t` for `:hint input`.
+- New variables `$QUTE_CONFIG_DIR`, `$QUTE_DATA_DIR` and
+  `$QUTE_DOWNLOAD_DIR` available for userscripts.
+- New option `ui` -> `status-position` to configure the position of the
+  status bar (top/bottom).
+- New `--pdf <filename>` argument for `:print` WHICH can be used to generate a
+  PDF without a dialog.
+
+Changed
+~~~~~~~
+
+- `:scroll-perc` now prefers a count over the argument given to it, which means
+  `gg` can be used with a count.
+- Aliases can now use `;;` to have an alias which executed multiple commands.
+- `:edit-url` now does nothing if the URL isn't changed in the spawned editor.
+- `:bookmark-add` can now be passed a URL and title to add that as a bookmark
+  rather than the current page.
+- New `taskadd` userscript to add a taskwarrior task annotated with the
+  current URL.
+- `:bookmark-del` and `:quickmark-del` now delete the current page's URL if none
+  is given.
+
+Fixed
+-----
+
+- Compatibility with PyQt 5.7
+- Fixed some configuration values being lost when a config option gets removed
+  from qutebrowser's code.
+- Fix crash when downloading with a full disk
+- Using `:jump-mark` (e.g. `''`) when the current URL is invalid doesn't crash
+  anymore.
+
+Removed
+-------
+
+- The ability to display status messages from webpages, as well as the related
+  `ui ->  display-statusbar-messages` setting.
+- The `general -> wrap-search` setting as searches now always wrap.
+  According to a quick straw poll and prior crash logs, almost nobody is using
+  `wrap-search = false`, and turning off wrapping is not possible with
+  QtWebEngine.
+- `:edit-url` now doesn't accept a count anymore as its behavior was confusing
+  and it doesn't make much sense to add a count.
+
+v0.7.0
+------
+
+Added
+~~~~~
+
+- New `:edit-url` command to edit the URL in an external editor.
+- New `network -> custom-headers` setting to send custom headers with every request.
+- New `{url:pretty}` commandline replacement which gets replaced by the decoded URL.
+- New marks to remember a scroll position:
+    - New `:jump-mark` command to jump to a mark, bound to `'`
+    - New `:set-mark` command to set a mark, bound to ```(backtick)
+    - The `'` mark gets set when moving away (hinting link with anchor, searching, etc.) so you can move back with `''`
+- New `--force-color` argument to force colored logging even if stdout is not a
+  terminal
+- New `:messages` command to show error messages
+- New pop-up showing possible keybinding when the first key of a keychain is
+  pressed. This can be turned off using `:set ui keyhint-blacklist *`.
+- New `hints -> auto-follow-timeout` setting to ignore keypresses after
+  following a hint when filtering in number mode.
+- New `:history-clear` command to clear the entire history
+- New `hints -> find-implementation` to select which implementation (JS/Python)
+  should be used to find hints on a page. The `javascript` implementation is
+  better, but slower.
+- New `inputs` group for `:hint` to hint text input fields.
+
+Changed
+~~~~~~~
+
+- qutebrowser got a new (slightly updated) logo
 - `:tab-focus` can now take a negative index to focus the nth tab counted from
   the right.
+- `:yank` can now yank the pretty/decoded URL by adding `--pretty`
+- `:navigate` now clears the URL fragment
+- `:completion-item-del` (`Ctrl-D`) can now be used in `:buffer` completion to
+  close a tab
+- Various SSL ciphers are now disabled by default. With recent Qt/OpenSSL
+  versions those already all are disabled, but with older versions they might
+  not be.
+- Show favicons as window icon with `tabs-are-windows` set.
+- `:bind <key>` without a command now shows the existing binding
+- The optional `colorlog` dependency got removed, as qutebrowser now displays
+  colored logs without it.
+- URLs are now shown decoded when hovering.
+- Keybindings are now shown in the command completion
+- Improved behavior when pasting multiple lines
+- Rapid hints can now also be used for the `normal` hint target, which can be
+  useful with javascript click handlers or checkboxes which don't actually open
+  a new page.
+- `:zoom-in` or `:zoom-out` (`+`/`-`) with a too large count now zooms to the
+  smallest/largest zoom instead of doing nothing.
+- The commandline now accepts partially typed commands if they're unique.
+- Number hints are now kept filtered after following a hint in rapid mode.
+- Number hints are now renumbered after filtering
+- Number hints can now be filtered with multiple space-separated search terms
+- `hints -> scatter` is now ignored for number hints
+- Better history implementation which also stores titles.
+  As a consequence, URLs which redirect to another URL are now added to the
+  history too, marked with a `-r` suffix to the timestamp field.
+
+Fixed
+-----
+
+- Fixed using `:hint links spawn` with flags - you can now use things like the
+  `-v` argument for `:spawn` or pass flags to the spawned commands.
+- Various fixes for hinting corner-cases where following a link didn't work or
+  the hint was drawn at the wrong position.
+- Fixed crash when downloading from a URL with SSL errors
+- Close file handles correctly when a download failed
+- Fixed crash when using `;Y` (`:hint links yank-primary`) on a system without
+  primary selection
+- Don't display quit confirmation with finished downloads
+- Fixed updating the tab index in the statusbar when opening a background tab
+- Fixed a crash when entering `:-- ` in the commandline
+- Fixed `:debug-console` with PyQt 5.6
+- Fixed qutebrowser not starting when `sys.stderr` is `None`
+- Fixed crash when cancelling a download which belongs to an MHTML download
+- Fixed rebinding of keybindings being case-sensitive
+- Fix for tab indicators getting lost when moving tabs
+- Fixed handling of backspace in number hinting mode
+- Fixed `FileNotFoundError` when starting in some cases on old Qt versions
+- Fixed sharing of cookies between tabs when `private-browsing` is enabled
+- Toggling values with `:set` now uses lower-case values
+- Hints now work with (non-standard) links with spaces around the URL
+- Strip off trailing spaces for history entries with no title
+
+v0.6.2
+------
+
+Fixed
+~~~~~
+
+- Fixed crash when using `:tab-{prev,next,focus}` right after closing the last
+  tab with `last-close` set to `close`.
+- Fixed crash when doing `:undo` in a new instance with `tabs -> last-close` set
+  to `default-page`.
+- Fixed crash when starting with --cachedir=""
+- Fixed crash in some circumstances when using dictionary hints
+- Fixed various crashes related to PyQt 5.6
 
 v0.6.1
 -----
@@ -406,7 +761,7 @@ Fixed
 ~~~~~
 
 - Scrolling should now work more reliably on some pages where arrow keys worked but `hjkl` didn't.
-- Small improvements when checking if an input is an URL or not.
+- Small improvements when checking if an input is a URL or not.
 - Fixed wrong cursor position when completing the first item in the completion.
 - Fixed exception when using search engines with {foo} in their name.
 - Fixed a bug where the same title was shown for all tabs on some systems.
@@ -418,7 +773,7 @@ Fixed
 - Various fixes for deprecated key bindings and auto-migrations.
 - Workaround for qutebrowser not starting when there are NUL-bytes in the history (because of a currently unknown bug).
 - Fixed handling of keybindings containing Ctrl/Meta on OS X.
-- Fixed crash when downloading an URL without filename (e.g. magnet links) via "Save as...".
+- Fixed crash when downloading a URL without filename (e.g. magnet links) via "Save as...".
 - Fixed exception when starting qutebrowser with `:set` as argument.
 - Fixed horrible completion performance when the `shrink` option was set.
 - Sessions now store zoom/scroll-position correctly.
@@ -569,7 +924,7 @@ Fixed
 - Scroll completion to top when showing it.
 - Handle unencodable file paths in config types correctly.
 - Fix for crash when executing a delayed command (because of a shadowed keybinding) and then unfocusing the window.
-- Fix for crash when hinting on a page which doesn't have an URL yet.
+- Fix for crash when hinting on a page which doesn't have a URL yet.
 - Fix exception when using `:set-cmd-text` with an empty argument.
 - Add a timeout to pastebin HTTP replies.
 - Various other fixes for small/rare bugs.

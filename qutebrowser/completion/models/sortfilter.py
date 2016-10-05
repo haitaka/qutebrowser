@@ -63,24 +63,18 @@ class CompletionFilterModel(QSortFilterProxyModel):
 
         Invalidates the filter and re-sorts the model.
 
-        If the current completion model overrides sort(), it is used.
-        If not, the default implementation in QCompletionFilterModel is called.
-
         Args:
             val: The value to set.
         """
         with debug.log_time(log.completion, 'Setting filter pattern'):
             self.pattern = val
+            val = re.sub(r' +', r' ', val)  # See #1919
             val = re.escape(val)
-            val = val.replace(r'\ ', r'.*')
+            val = val.replace(r'\ ', '.*')
             self.pattern_re = re.compile(val, re.IGNORECASE)
-            self.invalidateFilter()
-            sortcol = 0
-            try:
-                self.srcmodel.sort(sortcol)
-            except NotImplementedError:
-                self.sort(sortcol)
             self.invalidate()
+            sortcol = 0
+            self.sort(sortcol)
 
     def count(self):
         """Get the count of non-toplevel items currently visible.
@@ -140,20 +134,17 @@ class CompletionFilterModel(QSortFilterProxyModel):
         if parent == QModelIndex() or not self.pattern:
             return True
 
-        try:
-            return self.srcmodel.custom_filter(self.pattern, row, parent)
-        except NotImplementedError:
-            for col in self.srcmodel.columns_to_filter:
-                idx = self.srcmodel.index(row, col, parent)
-                if not idx.isValid():
-                    # No entries in parent model
-                    continue
-                data = self.srcmodel.data(idx)
-                if not data:
-                    continue
-                elif self.pattern_re.search(data):
-                    return True
-            return False
+        for col in self.srcmodel.columns_to_filter:
+            idx = self.srcmodel.index(row, col, parent)
+            if not idx.isValid():  # pragma: no cover
+                # this is a sanity check not hit by any test case
+                continue
+            data = self.srcmodel.data(idx)
+            if not data:
+                continue
+            elif self.pattern_re.search(data):
+                return True
+        return False
 
     def intelligentLessThan(self, lindex, rindex):
         """Custom sorting implementation.

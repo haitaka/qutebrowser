@@ -21,12 +21,15 @@
 
 import pytest
 
+# FIXME:qtwebengine Make these tests use the tab API
+pytest.importorskip('PyQt5.QtWebKit')
+
 from PyQt5.QtCore import Qt
 from PyQt5.QtWebKit import QWebSettings
 from PyQt5.QtWebKitWidgets import QWebPage
 
 
-@pytest.yield_fixture(autouse=True)
+@pytest.fixture(autouse=True)
 def enable_caret_browsing(qapp):
     """Fixture to enable caret browsing globally."""
     settings = QWebSettings.globalSettings()
@@ -64,7 +67,11 @@ class CaretTester:
 @pytest.fixture
 def caret_tester(js_tester):
     """Helper fixture to test caret browsing positions."""
-    return CaretTester(js_tester)
+    caret_tester = CaretTester(js_tester)
+    # Showing webview here is necessary for test_scrolled_down_img to
+    # succeed in some cases, see #1988
+    caret_tester.js.webview.show()
+    return caret_tester
 
 
 @pytest.mark.integration

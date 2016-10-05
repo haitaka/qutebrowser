@@ -35,36 +35,31 @@ class ExternalEditor(QObject):
 
     Attributes:
         _text: The current text before the editor is opened.
-        _oshandle: The OS level handle to the tmpfile.
-        _filehandle: The file handle to the tmpfile.
+        _file: The file handle as tempfile.NamedTemporaryFile. Note that this
+               handle will be closed after the initial file has been created.
         _proc: The GUIProcess of the editor.
-        _win_id: The window ID the ExternalEditor is associated with.
     """
 
     editing_finished = pyqtSignal(str)
 
-    def __init__(self, win_id, parent=None):
+    def __init__(self, parent=None):
         super().__init__(parent)
         self._text = None
-        self._oshandle = None
-        self._filename = None
+        self._file = None
         self._proc = None
-        self._win_id = win_id
 
     def _cleanup(self):
         """Clean up temporary files after the editor closed."""
-        if self._oshandle is None or self._filename is None:
+        if self._file is None:
             # Could not create initial file.
             return
         try:
-            os.close(self._oshandle)
             if self._proc.exit_status() != QProcess.CrashExit:
-                os.remove(self._filename)
+                os.remove(self._file.name)
         except OSError as e:
             # NOTE: Do not replace this with "raise CommandError" as it's
             # executed async.
-            message.error(self._win_id,
-                          "Failed to delete tempfile... ({})".format(e))
+            message.error("Failed to delete tempfile... ({})".format(e))
 
     @pyqtSlot(int, QProcess.ExitStatus)
     def on_proc_closed(self, exitcode, exitstatus):
@@ -82,13 +77,12 @@ class ExternalEditor(QObject):
                 return
             encoding = config.get('general', 'editor-encoding')
             try:
-                with open(self._filename, 'r', encoding=encoding) as f:
-                    text = f.read()  # pragma: no branch
+                with open(self._file.name, 'r', encoding=encoding) as f:
+                    text = f.read()
             except OSError as e:
                 # NOTE: Do not replace this with "raise CommandError" as it's
                 # executed async.
-                message.error(self._win_id, "Failed to read back edited file: "
-                                            "{}".format(e))
+                message.error("Failed to read back edited file: {}".format(e))
                 return
             log.procs.debug("Read back: {}".format(text))
             self.editing_finished.emit(text)
@@ -108,23 +102,26 @@ class ExternalEditor(QObject):
         if self._text is not None:
             raise ValueError("Already editing a file!")
         self._text = text
+        encoding = config.get('general', 'editor-encoding')
         try:
-            self._oshandle, self._filename = tempfile.mkstemp(
-                text=True, prefix='qutebrowser-editor-')
-            if text:
-                encoding = config.get('general', 'editor-encoding')
-                with open(self._filename, 'w', encoding=encoding) as f:
-                    f.write(text)  # pragma: no branch
+            # Close while the external process is running, as otherwise systems
+            # with exclusive write access (e.g. Windows) may fail to update
+            # the file from the external editor, see
+            # https://github.com/The-Compiler/qutebrowser/issues/1767
+            with tempfile.NamedTemporaryFile(
+                    mode='w', prefix='qutebrowser-editor-', encoding=encoding,
+                    delete=False) as fobj:
+                if text:
+                    fobj.write(text)
+                self._file = fobj
         except OSError as e:
-            message.error(self._win_id, "Failed to create initial file: "
-                                        "{}".format(e))
+            message.error("Failed to create initial file: {}".format(e))
             return
-        self._proc = guiprocess.GUIProcess(self._win_id, what='editor',
-                                           parent=self)
+        self._proc = guiprocess.GUIProcess(what='editor', parent=self)
         self._proc.finished.connect(self.on_proc_closed)
         self._proc.error.connect(self.on_proc_error)
         editor = config.get('general', 'editor')
         executable = editor[0]
-        args = [arg.replace('{}', self._filename) for arg in editor[1:]]
+        args = [arg.replace('{}', self._file.name) for arg in editor[1:]]
         log.procs.debug("Calling \"{}\" with args {}".format(executable, args))
         self._proc.start(executable, args)

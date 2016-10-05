@@ -17,19 +17,22 @@
 # You should have received a copy of the GNU General Public License
 # along with qutebrowser.  If not, see <http://www.gnu.org/licenses/>.
 
-# pylint: disable=invalid-name
+# pylint: disable=invalid-name,abstract-method
 
 """Fake objects/stubs."""
 
+import collections
 from unittest import mock
 
 from PyQt5.QtCore import pyqtSignal, QPoint, QProcess, QObject
 from PyQt5.QtNetwork import (QNetworkRequest, QAbstractNetworkCache,
                              QNetworkCacheMetaData)
-from PyQt5.QtWidgets import QCommonStyle, QWidget
+from PyQt5.QtWidgets import QCommonStyle, QLineEdit, QWidget
 
-from qutebrowser.browser import webview
+from qutebrowser.browser import browsertab, history
 from qutebrowser.config import configexc
+from qutebrowser.utils import usertypes, utils
+from qutebrowser.mainwindow import mainwindow
 
 
 class FakeNetworkCache(QAbstractNetworkCache):
@@ -70,14 +73,10 @@ class FakeKeyEvent:
 
 class FakeWebFrame:
 
-    """A stub for QWebFrame.
-
-    Attributes:
-        focus_elem: The 'focused' element.
-    """
+    """A stub for QWebFrame."""
 
     def __init__(self, geometry=None, *, scroll=None, plaintext=None,
-                 html=None, parent=None):
+                 html=None, parent=None, zoom=1.0):
         """Constructor.
 
         Args:
@@ -85,6 +84,7 @@ class FakeWebFrame:
             scroll: The scroll position as QPoint.
             plaintext: Return value of toPlainText
             html: Return value of tohtml.
+            zoom: The zoom factor.
             parent: The parent frame.
         """
         if scroll is None:
@@ -92,18 +92,9 @@ class FakeWebFrame:
         self.geometry = mock.Mock(return_value=geometry)
         self.scrollPosition = mock.Mock(return_value=scroll)
         self.parentFrame = mock.Mock(return_value=parent)
-        self.focus_elem = None
         self.toPlainText = mock.Mock(return_value=plaintext)
         self.toHtml = mock.Mock(return_value=html)
-
-    def findFirstElement(self, selector):
-        if selector == '*:focus':
-            if self.focus_elem is not None:
-                return self.focus_elem
-            else:
-                raise Exception("Trying to get focus element but it's unset!")
-        else:
-            raise Exception("Unknown selector {!r}!".format(selector))
+        self.zoomFactor = mock.Mock(return_value=zoom)
 
 
 class FakeChildrenFrame:
@@ -120,8 +111,15 @@ class FakeQApplication:
 
     """Stub to insert as QApplication module."""
 
-    def __init__(self, style=None, all_widgets=None, active_window=None):
-        self.instance = mock.Mock(return_value=self)
+    UNSET = object()
+
+    def __init__(self, style=None, all_widgets=None, active_window=None,
+                 instance=UNSET):
+
+        if instance is self.UNSET:
+            self.instance = mock.Mock(return_value=self)
+        else:
+            self.instance = mock.Mock(return_value=instance)
 
         self.style = mock.Mock(spec=QCommonStyle)
         self.style().metaObject().className.return_value = style
@@ -132,10 +130,12 @@ class FakeQApplication:
 
 class FakeUrl:
 
-    """QUrl stub which provides .path()."""
+    """QUrl stub which provides .path(), isValid() and host()."""
 
-    def __init__(self, path=None):
+    def __init__(self, path=None, valid=True, host=None):
         self.path = mock.Mock(return_value=path)
+        self.isValid = mock.Mock(returl_value=valid)
+        self.host = mock.Mock(returl_value=host)
 
 
 class FakeNetworkReply:
@@ -210,16 +210,47 @@ def fake_qprocess():
     return m
 
 
-class FakeWebView(QWidget):
+class FakeWebTabScroller(browsertab.AbstractScroller):
 
-    """Fake WebView which can be added to a tab."""
+    """Fake AbstractScroller to use in tests."""
 
-    def __init__(self):
-        super().__init__()
-        self.progress = 0
-        self.scroll_pos = (-1, -1)
-        self.load_status = webview.LoadStatus.none
-        self.tab_id = 0
+    def __init__(self, tab, pos_perc):
+        super().__init__(tab)
+        self._pos_perc = pos_perc
+
+    def pos_perc(self):
+        return self._pos_perc
+
+
+class FakeWebTab(browsertab.AbstractTab):
+
+    """Fake AbstractTab to use in tests."""
+
+    def __init__(self, url=FakeUrl(), title='', tab_id=0, *,
+                 scroll_pos_perc=(0, 0),
+                 load_status=usertypes.LoadStatus.success,
+                 progress=0):
+        super().__init__(win_id=0, mode_manager=None)
+        self._load_status = load_status
+        self._title = title
+        self._url = url
+        self._progress = progress
+        self.scroller = FakeWebTabScroller(self, scroll_pos_perc)
+        wrapped = QWidget()
+        self._layout.wrap(self, wrapped)
+
+    def url(self, requested=False):
+        assert not requested
+        return self._url
+
+    def title(self):
+        return self._title
+
+    def progress(self):
+        return self._progress
+
+    def load_status(self):
+        return self._load_status
 
 
 class FakeSignal:
@@ -278,8 +309,14 @@ class FakeCommand:
 
     """A simple command stub which has a description."""
 
-    def __init__(self, desc):
+    def __init__(self, name='', desc='', hide=False, debug=False,
+                 deprecated=False, completion=None):
         self.desc = desc
+        self.name = name
+        self.hide = hide
+        self.debug = debug
+        self.deprecated = deprecated
+        self.completion = completion
 
 
 class FakeTimer(QObject):
@@ -330,6 +367,56 @@ class FakeTimer(QObject):
         return self._started
 
 
+class InstaTimer(QObject):
+
+    """Stub for a QTimer that fires instantly on start().
+
+    Useful to test a time-based event without inserting an artificial delay.
+    """
+
+    timeout = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+    def start(self):
+        self.timeout.emit()
+
+    def setSingleShot(self, yes):
+        pass
+
+    def setInterval(self, interval):
+        pass
+
+
+class FakeConfigType:
+
+    """A stub to provide valid_values for typ attribute of a SettingValue."""
+
+    def __init__(self, *valid_values):
+        # normally valid_values would be a ValidValues, but for simplicity of
+        # testing this can be a simple list: [(val, desc), (val, desc), ...]
+        self.complete = lambda: [(val, '') for val in valid_values]
+
+
+class StatusBarCommandStub(QLineEdit):
+
+    """Stub for the statusbar command prompt."""
+
+    got_cmd = pyqtSignal(str)
+    clear_completion_selection = pyqtSignal()
+    hide_completion = pyqtSignal()
+    update_completion = pyqtSignal()
+    show_cmd = pyqtSignal()
+    hide_cmd = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+    def prefix(self):
+        return self.text()[0]
+
+
 class ConfigStub(QObject):
 
     """Stub for the config module.
@@ -363,7 +450,7 @@ class ConfigStub(QObject):
         """
         return self.data[name]
 
-    def get(self, sect, opt):
+    def get(self, sect, opt, raw=True):
         """Get a value from the config."""
         data = self.data[sect]
         try:
@@ -385,8 +472,74 @@ class KeyConfigStub:
 
     """Stub for the key-config object."""
 
-    def get_bindings_for(self, _section):
-        return {}
+    def __init__(self):
+        self.bindings = {}
+
+    def get_bindings_for(self, section):
+        return self.bindings.get(section)
+
+    def set_bindings_for(self, section, bindings):
+        self.bindings[section] = bindings
+
+    def get_reverse_bindings_for(self, section):
+        """Get a dict of commands to a list of bindings for the section."""
+        cmd_to_keys = collections.defaultdict(list)
+        for key, cmd in self.bindings[section].items():
+            # put special bindings last
+            if utils.is_special_key(key):
+                cmd_to_keys[cmd].append(key)
+            else:
+                cmd_to_keys[cmd].insert(0, key)
+        return cmd_to_keys
+
+
+class UrlMarkManagerStub(QObject):
+
+    """Stub for the quickmark-manager or bookmark-manager object."""
+
+    added = pyqtSignal(str, str)
+    removed = pyqtSignal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.marks = {}
+
+    def delete(self, key):
+        del self.marks[key]
+        self.removed.emit(key)
+
+
+class BookmarkManagerStub(UrlMarkManagerStub):
+
+    """Stub for the bookmark-manager object."""
+
+    pass
+
+
+class QuickmarkManagerStub(UrlMarkManagerStub):
+
+    """Stub for the quickmark-manager object."""
+
+    def quickmark_del(self, key):
+        self.delete(key)
+
+
+class WebHistoryStub(QObject):
+
+    """Stub for the web-history object."""
+
+    add_completion_item = pyqtSignal(history.Entry)
+    cleared = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.history_dict = collections.OrderedDict()
+
+    def __iter__(self):
+        return iter(self.history_dict.values())
+
+    def __len__(self):
+        return len(self.history_dict)
 
 
 class HostBlockerStub:
@@ -395,3 +548,48 @@ class HostBlockerStub:
 
     def __init__(self):
         self.blocked_hosts = set()
+
+
+class SessionManagerStub:
+
+    """Stub for the session-manager object."""
+
+    def __init__(self):
+        self.sessions = []
+
+    def list_sessions(self):
+        return self.sessions
+
+
+class TabbedBrowserStub(QObject):
+
+    """Stub for the tabbed-browser object."""
+
+    new_tab = pyqtSignal(browsertab.AbstractTab, int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.tabs = []
+        self.shutting_down = False
+
+    def count(self):
+        return len(self.tabs)
+
+    def widget(self, i):
+        return self.tabs[i]
+
+    def page_title(self, i):
+        return self.tabs[i].title()
+
+    def on_tab_close_requested(self, idx):
+        del self.tabs[idx]
+
+
+class ApplicationStub(QObject):
+
+    """Stub to insert as the app object in objreg."""
+
+    new_window = pyqtSignal(mainwindow.MainWindow)
+
+    def __init__(self):
+        super().__init__()
